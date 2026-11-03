@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Git tag to build and release (e.g. v1.0.14)"
-        required: true
+        description: "Optional release tag (e.g. v1.0.14). Leave empty for build only."
+        required: false
         type: string
 
 permissions:
@@ -27,8 +27,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.release_tag }}
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -72,8 +70,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.release_tag }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -128,19 +124,30 @@ jobs:
           Get-ChildItem dist | Out-Host
         shell: pwsh
 
+      # Build only: save files as GitHub Actions Artifacts.
+      - name: Upload build artifacts
+        if: inputs.release_tag == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vikey-Windows-${{ github.run_number }}
+          path: dist/*
+          retention-days: 30
+
+      # Release: create GitHub Release if it does not exist.
       - name: Create release if not exists
+        if: inputs.release_tag != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY 2>$null
+          gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" *> $null
 
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Release not found. Creating release..."
 
-            gh release create $env:RELEASE_TAG `
-              --repo $env:GITHUB_REPOSITORY `
-              --verify-tag `
-              --title $env:RELEASE_TAG `
+            gh release create "$env:RELEASE_TAG" `
+              --repo "$env:GITHUB_REPOSITORY" `
+              --target "$env:GITHUB_SHA" `
+              --title "$env:RELEASE_TAG" `
               --generate-notes
 
             if ($LASTEXITCODE -ne 0) {
@@ -149,13 +156,21 @@ jobs:
           }
         shell: pwsh
 
-      - name: Upload to the release
+      # Release: upload installers and portable ZIPs.
+      - name: Upload to GitHub Release
+        if: inputs.release_tag != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload $env:RELEASE_TAG dist/* `
+          $files = @(Get-ChildItem -Path dist -File | ForEach-Object { $_.FullName })
+
+          if ($files.Count -eq 0) {
+            throw "No release files found in dist/"
+          }
+
+          gh release upload "$env:RELEASE_TAG" @files `
             --clobber `
-            --repo $env:GITHUB_REPOSITORY
+            --repo "$env:GITHUB_REPOSITORY"
 
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to upload release assets"
