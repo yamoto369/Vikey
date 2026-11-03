@@ -1,16 +1,17 @@
+
 name: windows
+
 on:
-  push:
-    branches: [windows, main]
-    tags: ['v*']
-    paths: [Engine/**, Tools/autoswitch/**, Windows/**, .github/workflows/windows.yml]
-  pull_request:
-    paths: [Engine/**, Tools/autoswitch/**, Windows/**, .github/workflows/windows.yml]
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing GitHub release tag to package for and upload to (e.g. v1.0.14)"
-        required: false
+        description: "Git tag to build and release (e.g. v1.0.14)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
 jobs:
   engine:
     strategy:
@@ -21,22 +22,31 @@ jobs:
             arch: x64
           - runner: windows-11-arm
             arch: arm64
+
     runs-on: ${{ matrix.runner }}
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.arch }}
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install Ninja
         run: choco install ninja -y --no-progress
         shell: pwsh
+
       - name: Engine lock (rule cases, golden, Telex lock, driver parity, perf)
         run: pwsh Windows/check.ps1
         shell: pwsh
-      - name: Build app (version from project.yml, like the Mac app)
+
+      - name: Build app (version from project.yml)
         if: hashFiles('Windows/App/CMakeLists.txt') != ''
         run: |
           $ver = (Select-String -Path project.yml -Pattern 'MARKETING_VERSION: "([^"]+)"').Matches[0].Groups[1].Value
@@ -44,28 +54,32 @@ jobs:
           cmake -S Windows -B Windows/build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build Windows/build --config Release --target vikey
         shell: pwsh
+
       - uses: actions/upload-artifact@v4
         if: hashFiles('Windows/App/CMakeLists.txt') != ''
         with:
           name: Vikey-windows-${{ matrix.arch }}
           path: Windows/build/App/Vikey.exe
 
-  # Tag v<version> (pushed by Tools/release/release.sh): installers + portable zips onto the GitHub release.
   package:
     needs: engine
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     runs-on: windows-latest
-    permissions:
-      contents: write
+
     env:
       CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
       CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: "Code signing tool (ssign - Certum SimplySign cloud cert, headless)"
+
+      - name: Code signing tool (ssign - Certum SimplySign cloud cert)
         if: env.CERTUM_OTP != ''
         run: |
           Invoke-WebRequest -Uri https://github.com/Le-Syl21/ssign/releases/download/v0.1.8/ssign-windows-x86_64.zip -OutFile ssign.zip
@@ -73,29 +87,77 @@ jobs:
           $exe = (Get-ChildItem ssign -Recurse -Filter ssign.exe | Select-Object -First 1).FullName
           "SSIGN=$exe" >> $env:GITHUB_ENV
         shell: pwsh
-      - name: Installers (Inno Setup) + portable zips, signed when the certificate secrets exist
+
+      - name: Installers (Inno Setup) + portable zips
         run: |
           $ver = (Select-String -Path project.yml -Pattern 'MARKETING_VERSION: "([^"]+)"').Matches[0].Groups[1].Value
           "$ver" | Out-Host
+
           New-Item -ItemType Directory -Force dist | Out-Null
+
           function Sign($file) {
-            if (-not $env:SSIGN) { "unsigned: $file (no CERTUM_OTP secret)" | Out-Host; return }
+            if (-not $env:SSIGN) {
+              "unsigned: $file (no CERTUM_OTP secret)" | Out-Host
+              return
+            }
+
             & $env:SSIGN $file
-            if ($LASTEXITCODE -ne 0) { throw "signing failed: $file" }
+            if ($LASTEXITCODE -ne 0) {
+              throw "signing failed: $file"
+            }
           }
+
           foreach ($arch in @('x64', 'arm64')) {
             $src = "artifacts/Vikey-windows-$arch"
+
             Sign "$src/Vikey.exe"
+
             & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=$ver" "/DArch=$arch" "/DSrc=$((Resolve-Path $src).Path)" Windows/installer/Vikey.iss
-            if ($LASTEXITCODE -ne 0) { exit 1 }
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup failed for $arch"
+            }
+
             Sign "Windows/installer/out/Vikey-$ver-$arch-Setup.exe"
+
             Move-Item "Windows/installer/out/Vikey-$ver-$arch-Setup.exe" dist/
+
             Compress-Archive -Path "$src/Vikey.exe" -DestinationPath "dist/Vikey-$ver-$arch-portable.zip"
           }
+
           Get-ChildItem dist | Out-Host
         shell: pwsh
-      - name: Upload to the release
-        run: gh release upload "${{ inputs.release_tag || github.ref_name }}" dist/* --clobber -R ${{ github.repository }}
-        shell: pwsh
+
+      - name: Create release if not exists
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY 2>$null
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release not found. Creating release..."
+
+            gh release create $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --verify-tag `
+              --title $env:RELEASE_TAG `
+              --generate-notes
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create GitHub Release"
+            }
+          }
+        shell: pwsh
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload $env:RELEASE_TAG dist/* `
+            --clobber `
+            --repo $env:GITHUB_REPOSITORY
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload release assets"
+          }
+        shell: pwsh
