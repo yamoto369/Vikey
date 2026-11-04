@@ -2,7 +2,7 @@
 // icon, wordmark, hotkey hint and the Tiếng Việt / English switch, then a grouped form), the
 // onboarding (OnboardingView.swift minus the Accessibility step), the About panel, the
 // Acknowledgements window and the typing-log window. Drawn with GDI+ so the toggles, segmented
-// control and rounded groups look like the macOS ones.
+// controls and grouped surfaces follow a lightweight Fluent-inspired Windows visual system.
 #define _HAS_STD_BYTE 0
 #include "Settings.h"
 #include "Core.h"
@@ -13,6 +13,7 @@
 #include <windowsx.h>
 #include <shellapi.h>
 #include <objidl.h>
+#include <dwmapi.h>
 #define GDIPVER 0x0110
 namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
@@ -30,18 +31,19 @@ namespace vikey { namespace ui {
 
 // ---- shared look ---------------------------------------------------------------------------
 static HFONT fBody, fBodyBold, fSmall, fWordmark, fTitle, fMono, fTitle2, fCallout, fMonoBold, fWordmark24;
-static const COLORREF BG = RGB(246, 246, 246), GROUP = RGB(255, 255, 255), BORDER = RGB(226, 226, 226), SEP = RGB(236, 236, 236);
-static const COLORREF TEXT = RGB(0, 0, 0), SECONDARY = RGB(110, 110, 115), TERTIARY = RGB(170, 170, 175), ACCENT = RGB(10, 124, 255), GREEN = RGB(52, 199, 89), TOGGLE_OFF = RGB(233, 233, 235);
-static const COLORREF BRAND = RGB(79, 70, 229);   // design/BRAND.md #4F46E5
-static const int W = 460, MARGIN = 20, ROW = 34, GAP = 12, RADIUS = 10;   // fits a 1366x768 screen with every row shown
+static const COLORREF BG = RGB(245, 247, 250), GROUP = RGB(255, 255, 255), BORDER = RGB(226, 232, 240), SEP = RGB(237, 241, 246);
+static const COLORREF TEXT = RGB(31, 41, 55), SECONDARY = RGB(100, 116, 139), TERTIARY = RGB(148, 163, 184), ACCENT = RGB(37, 99, 235), GREEN = RGB(22, 163, 74), TOGGLE_OFF = RGB(226, 232, 240);
+static const COLORREF BRAND = RGB(37, 99, 235);   // Fluent-inspired blue accent
+static const int W = 620, MARGIN = 24, ROW = 42, GAP = 14, RADIUS = 12;
 static ULONG_PTR gdipToken = 0;
 static HINSTANCE _inst;
 static void initLook() {
     if (fBody) return;
     GdiplusStartupInput in; GdiplusStartup(&gdipToken, &in, nullptr);
-    auto mk = [](int px, int weight, const wchar_t* face = L"Segoe UI") { return CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, face); };
-    fBody = mk(15, FW_NORMAL); fBodyBold = mk(15, FW_SEMIBOLD); fSmall = mk(13, FW_NORMAL); fWordmark = mk(24, FW_BOLD); fTitle = mk(17, FW_SEMIBOLD); fMono = mk(13, FW_NORMAL, L"Consolas");
-    fTitle2 = mk(20, FW_SEMIBOLD); fCallout = mk(14, FW_NORMAL); fMonoBold = mk(15, FW_BOLD, L"Consolas"); fWordmark24 = mk(26, FW_BOLD);
+    auto mk = [](int px, int weight, const wchar_t* face = L"Segoe UI Variable Text") { return CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, face); };
+    // Segoe UI Variable is available on Windows 11; the font mapper falls back to Segoe UI on older systems.
+    fBody = mk(16, FW_NORMAL); fBodyBold = mk(16, FW_SEMIBOLD); fSmall = mk(14, FW_NORMAL); fWordmark = mk(28, FW_BOLD); fTitle = mk(18, FW_SEMIBOLD); fMono = mk(14, FW_NORMAL, L"Consolas");
+    fTitle2 = mk(22, FW_SEMIBOLD); fCallout = mk(15, FW_NORMAL); fMonoBold = mk(16, FW_BOLD, L"Consolas"); fWordmark24 = mk(28, FW_BOLD);
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_LINK_CLASS | ICC_BAR_CLASSES}; InitCommonControlsEx(&icc);
 }
 static Color gp(COLORREF c, BYTE a = 255) { return Color(a, GetRValue(c), GetGValue(c), GetBValue(c)); }
@@ -82,6 +84,15 @@ static void centerOnMouseScreen(HWND h) {
     SetWindowPos(h, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 static void bringToFront(HWND h) { ShowWindow(h, SW_SHOW); SetForegroundWindow(h); }
+
+// Ask DWM for native Windows 11 rounded window corners and a subtle Fluent border.
+static void applyFluentFrame(HWND h) {
+    if (!h) return;
+    const DWORD rounded = 2; // DWMWCP_ROUND
+    const COLORREF border = RGB(226, 232, 240);
+    DwmSetWindowAttribute(h, 33, &rounded, sizeof(rounded)); // DWMWA_WINDOW_CORNER_PREFERENCE
+    DwmSetWindowAttribute(h, 34, &border, sizeof(border));   // DWMWA_BORDER_COLOR
+}
 
 // Lines of text with links, drawn by hand so they can be centred (About) and hit-tested.
 struct Seg { std::wstring text; std::wstring url; HFONT font; COLORREF color; };
@@ -297,20 +308,20 @@ static void beginGroup(const wchar_t* title) { if (title) { _titles.push_back({_
 static void endGroup() { _groups.push_back({_groupTop, _y}); _y += GAP; }
 static void rowLabel(const wchar_t* label, const wchar_t* tip) {
     if (_y != _groupTop) _seps.push_back(_y);
-    int ly = _y + (ROW - 20) / 2;
-    child(L"STATIC", label, SS_LEFT | SS_NOPREFIX, MARGIN + 16, ly, 300, 20, 0, fBody);
+    int ly = _y + (ROW - 22) / 2;
+    child(L"STATIC", label, SS_LEFT | SS_NOPREFIX, MARGIN + 18, ly, 360, 22, 0, fBody);
     HDC dc = GetDC(_win); int lw = textWidth(dc, fBody, label); ReleaseDC(_win, dc);
-    if (tip) { HWND t = child(L"VikeyTip", tip, 0, MARGIN + 16 + lw + 6, ly + 2, 16, 16, 0); addTip(t, tip); }
+    if (tip) { HWND t = child(L"VikeyTip", tip, 0, MARGIN + 18 + lw + 8, ly + 3, 16, 16, 0); addTip(t, tip); }
 }
 static HWND row(const wchar_t* label, const wchar_t* tip, const wchar_t* cls, int id, int cw, int ch, DWORD style = 0) {
     rowLabel(label, tip);
-    HWND c = child(cls, L"", style, W - MARGIN - 16 - cw, _y + (ROW - ch) / 2, cw, ch, id, fBody);
+    HWND c = child(cls, L"", style, W - MARGIN - 18 - cw, _y + (ROW - ch) / 2, cw, ch, id, fBody);
     _ctl[id] = c; _y += ROW; return c;
 }
 static HWND toggleRow(const wchar_t* label, const wchar_t* tip, int id, bool on) { HWND c = row(label, tip, L"VikeyToggle", id, 40, 23); setToggle(c, on); return c; }
 static HWND recorderRow(const wchar_t* label, const wchar_t* tip, const wchar_t* pref, int value, int id) {
     rowLabel(label, tip);
-    HWND c = makeRecorder(_win, pref, value, W - MARGIN - 16 - 134, _y + (ROW - 28) / 2, 134, 28, id, GROUP);
+    HWND c = makeRecorder(_win, pref, value, W - MARGIN - 18 - 150, _y + (ROW - 30) / 2, 150, 30, id, GROUP);
     _ctl[id] = c; _y += ROW; return c;
 }
 
@@ -326,13 +337,13 @@ static void paintMain(HWND h) {
     HBRUSH bg = CreateSolidBrush(BG); FillRect(dc, &rc, bg); DeleteObject(bg);
     Graphics g(dc); g.SetSmoothingMode(SmoothingModeAntiAlias);
     for (auto& gr : _groups) roundRect(g, RectF((float)MARGIN, (float)gr.top, (float)(W - 2 * MARGIN), (float)(gr.bottom - gr.top)), RADIUS, gp(GROUP), gp(BORDER));
-    Pen sep(gp(SEP), 1); for (int y : _seps) g.DrawLine(&sep, MARGIN + 16, y, W - MARGIN - 16, y);
+    Pen sep(gp(SEP), 1); for (int y : _seps) g.DrawLine(&sep, MARGIN + 18, y, W - MARGIN - 18, y);
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, TEXT);
-    SelectObject(dc, fBodyBold); for (auto& t : _titles) { RECT r = {MARGIN + 16, t.first + 4, W, t.first + 26}; DrawTextW(dc, t.second.c_str(), -1, &r, DT_LEFT | DT_SINGLELINE); }
+    SelectObject(dc, fTitle); for (auto& t : _titles) { RECT r = {MARGIN + 18, t.first + 2, W - MARGIN, t.first + 28}; SetTextColor(dc, BRAND); DrawTextW(dc, t.second.c_str(), -1, &r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX); }
     // header: icon, wordmark
     HICON icon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 44, 44, LR_DEFAULTCOLOR);
-    if (icon) { DrawIconEx(dc, MARGIN, 14, icon, 44, 44, 0, nullptr, DI_NORMAL); DestroyIcon(icon); }
-    drawWordmark(dc, fWordmark, MARGIN + 56, 9);
+    if (icon) { DrawIconEx(dc, MARGIN, 16, icon, 44, 44, 0, nullptr, DI_NORMAL); DestroyIcon(icon); }
+    drawWordmark(dc, fWordmark, MARGIN + 56, 10);
     EndPaint(h, &ps);
 }
 
@@ -341,9 +352,9 @@ static void buildMain() {
     if (_tooltip) { DestroyWindow(_tooltip); _tooltip = nullptr; }
     _groups.clear(); _titles.clear(); _seps.clear(); _ctl.clear();
     // header
-    _hint = child(L"STATIC", L"", SS_LEFT, MARGIN + 56, 43, 220, 18, 0, fSmall); setHint();   // under the wordmark's descender (the y was cut)
-    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164, 22, 164, 30, C_SEG); languageChanged(core::language());
-    _y = 70;
+    _hint = child(L"STATIC", L"", SS_LEFT, MARGIN + 56, 45, 260, 20, 0, fSmall); setHint();   // under the wordmark's descender (the y was cut)
+    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164, 24, 164, 32, C_SEG); languageChanged(core::language());
+    _y = 78;
     int hk = currentHotkey();
     beginGroup(nullptr);
     recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", hk, C_HOTKEY);
@@ -356,13 +367,13 @@ static void buildMain() {
     toggleRow(L"Nhớ theo trang web", L"Trong Chrome, Edge, Brave, Vivaldi, Opera, Firefox: nhớ tiếng Anh hay tiếng Việt cho từng trang web. Chỉ đọc địa chỉ tab đang mở, ngay trên máy bạn.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
     endGroup();
     beginGroup(L"Gõ tiếng Việt");
-    HWND style = row(L"Kiểu gõ", L"Telex: [ ra ơ, ] ra ư, w ra ư. Telex đơn giản 1: [ ] là dấu ngoặc, w đứng riêng vẫn là w. Telex đơn giản 2: [ ] là dấu ngoặc, w vẫn ra ư. Cả ba kiểu đều gõ uw, ow, aw ra ư, ơ, ă.", L"COMBOBOX", C_STYLE, 150, 200, CBS_DROPDOWNLIST | WS_TABSTOP);
+    HWND style = row(L"Kiểu gõ", L"Telex: [ ra ơ, ] ra ư, w ra ư. Telex đơn giản 1: [ ] là dấu ngoặc, w đứng riêng vẫn là w. Telex đơn giản 2: [ ] là dấu ngoặc, w vẫn ra ư. Cả ba kiểu đều gõ uw, ow, aw ra ư, ơ, ă.", L"COMBOBOX", C_STYLE, 170, 220, CBS_DROPDOWNLIST | WS_TABSTOP);
     for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
     SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
-    SetWindowPos(style, nullptr, W - MARGIN - 16 - 150, _y - ROW + 4, 150, 200, SWP_NOZORDER);
-    HWND mark = row(L"Đặt dấu", L"Vị trí dấu thanh với oa, oe, uy: kiểu mới (hoà, thuý) hoặc kiểu cũ (hòa, thúy).", L"COMBOBOX", C_MARK, 130, 200, CBS_DROPDOWNLIST | WS_TABSTOP);
+    SetWindowPos(style, nullptr, W - MARGIN - 18 - 170, _y - ROW + 6, 170, 220, SWP_NOZORDER);
+    HWND mark = row(L"Đặt dấu", L"Vị trí dấu thanh với oa, oe, uy: kiểu mới (hoà, thuý) hoặc kiểu cũ (hòa, thúy).", L"COMBOBOX", C_MARK, 140, 220, CBS_DROPDOWNLIST | WS_TABSTOP);
     SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy"); SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
-    SetWindowPos(mark, nullptr, W - MARGIN - 16 - 130, _y - ROW + 4, 130, 200, SWP_NOZORDER);
+    SetWindowPos(mark, nullptr, W - MARGIN - 18 - 140, _y - ROW + 6, 140, 220, SWP_NOZORDER);
     toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
     toggleRow(L"Trả lại phím khi sai", L"Khi gõ xong một từ sai chính tả tiếng Việt, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
     endGroup();
@@ -421,6 +432,7 @@ void showSettings(HINSTANCE inst, bool firstRun) {
     static bool reg = false;
     if (!reg) { WNDCLASSW wc = {}; wc.lpfnWndProc = mainProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyMain"; wc.hbrBackground = nullptr; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP)); RegisterClassW(&wc); reg = true; }
     _win = CreateWindowExW(0, L"VikeyMain", L"Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN, 0, 0, W, 600, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_win);
     buildMain();
     centerOnMouseScreen(_win);   // Tony: open in the middle of the screen (Mac 1.0.16/1.0.18)
     bringToFront(_win);
@@ -470,6 +482,7 @@ void showBlacklist(HINSTANCE inst) {
     RECT wr = {0, 0, 430, 340}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
     _blacklistWin = CreateWindowExW(0, L"VikeyBlacklist", L"Ứng dụng không dùng bộ gõ", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_blacklistWin);
     _blacklistList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
         16, 16, 382, 230, _blacklistWin, nullptr, inst, nullptr);
     ListView_SetExtendedListViewStyle(_blacklistList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
@@ -644,6 +657,7 @@ void showOnboarding(HINSTANCE inst) {
     if (!reg) { WNDCLASSW wc = {}; wc.lpfnWndProc = onbProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyOnboarding"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP)); RegisterClassW(&wc); reg = true; }
     RECT wr = {0, 0, OW, OH}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
     _onbWin = CreateWindowExW(0, L"VikeyOnboarding", L"Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN, 0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_onbWin);
     int s = prefs::getInt(L"OnboardingStep", -1); _step = s >= 0 && s < S_COUNT ? s : S_WELCOME;   // screenshots
     buildOnboarding();
     centerOnMouseScreen(_onbWin);
@@ -742,6 +756,7 @@ void showAcknowledgements(HINSTANCE inst) {
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VSCROLL;
     RECT wr = {0, 0, AW, AH}; AdjustWindowRectEx(&wr, style, FALSE, 0); wr.right += GetSystemMetrics(SM_CXVSCROLL);
     _ackWin = CreateWindowExW(0, L"VikeyAck", L"Ghi nhận", style, 0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_ackWin);
     HDC dc = GetDC(_ackWin); _ackContent = paintAck(dc, 0, false); ReleaseDC(_ackWin, dc); _ackScroll = 0;
     SCROLLINFO si = {sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS, 0, _ackContent - 1, (UINT)AH, 0}; SetScrollInfo(_ackWin, SB_VERT, &si, TRUE);
     centerOnMouseScreen(_ackWin);
@@ -785,6 +800,7 @@ void showAbout(HINSTANCE inst) {
     if (!reg) { WNDCLASSW wc = {}; wc.lpfnWndProc = aboutProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyAbout"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP)); RegisterClassW(&wc); reg = true; }
     RECT wr = {0, 0, 300, 304}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
     _aboutWin = CreateWindowExW(0, L"VikeyAbout", L"Giới thiệu Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_aboutWin);
     centerOnMouseScreen(_aboutWin);
     bringToFront(_aboutWin);
 }
