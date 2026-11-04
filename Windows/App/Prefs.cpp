@@ -68,6 +68,27 @@ void setString(const wchar_t* key, const std::wstring& value) {
     RegCloseKey(h);
 }
 
+std::vector<std::wstring> getStringList(const wchar_t* key) {
+    std::vector<std::wstring> out;
+    HKEY h = open(KEY_READ); if (!h) return out;
+    DWORD size = 0, type = 0;
+    if (RegQueryValueExW(h, key, nullptr, &type, nullptr, &size) == ERROR_SUCCESS && type == REG_MULTI_SZ && size >= 2 * sizeof(wchar_t)) {
+        std::vector<wchar_t> buf(size / sizeof(wchar_t) + 2, 0);
+        if (RegQueryValueExW(h, key, nullptr, &type, (LPBYTE)buf.data(), &size) == ERROR_SUCCESS && type == REG_MULTI_SZ)
+            for (const wchar_t* item = buf.data(); *item; item += wcslen(item) + 1) out.emplace_back(item);
+    }
+    RegCloseKey(h); return out;
+}
+
+void setStringList(const wchar_t* key, const std::vector<std::wstring>& values) {
+    HKEY h = open(KEY_WRITE); if (!h) return;
+    std::vector<wchar_t> data;
+    for (const auto& value : values) if (!value.empty()) { data.insert(data.end(), value.begin(), value.end()); data.push_back(0); }
+    data.push_back(0); if (data.size() == 1) data.push_back(0);
+    RegSetValueExW(h, key, 0, REG_MULTI_SZ, (const BYTE*)data.data(), (DWORD)(data.size() * sizeof(wchar_t)));
+    RegCloseKey(h);
+}
+
 void remove(const wchar_t* key) {
     HKEY h = open(KEY_WRITE); if (!h) return;
     RegDeleteValueW(h, key); RegCloseKey(h);

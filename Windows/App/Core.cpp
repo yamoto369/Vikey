@@ -57,6 +57,8 @@ static DWORD _keyVk = 0, _keyExtended = 0;   // the key as Windows sent it: re-s
 static bool _hasJustUsedHotKey = false;
 static std::function<void(int)> _observer;
 static std::wstring _frontApp = L"UnknownApp";   // exe name of the app in front
+static std::vector<std::wstring> _blacklistedApps;
+static bool _frontAppBlacklisted = false;
 static std::wstring _siteHost;                    // host of the browser tab in front (Phase 3)
 static bool _otherInputLanguage = false;          // Japanese/Chinese IME layout active
 static int _languageTemp = 0;
@@ -199,15 +201,41 @@ static void TLContext(int to) { TLEndWord("context"); TLCount("context"); TLWrit
 
 // ---- Front app / smart switch -----------------------------------------------------------
 std::wstring frontAppName() { return _frontApp; }
+bool isFrontAppBlacklisted() { return _frontAppBlacklisted; }
+std::vector<std::wstring> blacklistedApps() { return _blacklistedApps; }
+static std::wstring normalizedExe(std::wstring name) {
+    size_t slash = name.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) name = name.substr(slash + 1);
+    std::transform(name.begin(), name.end(), name.begin(), towlower);
+    return name;
+}
+static void saveBlacklist() { prefs::setStringList(L"AppBlacklist", _blacklistedApps); }
+void addFrontAppToBlacklist() {
+    if (_frontApp.empty() || _frontApp == L"UnknownApp") return;
+    std::wstring exe = normalizedExe(_frontApp);
+    for (const auto& item : _blacklistedApps) if (normalizedExe(item) == exe) return;
+    _blacklistedApps.push_back(exe); saveBlacklist(); onForegroundChanged();
+}
+void removeAppFromBlacklist(const std::wstring& exeName) {
+    std::wstring target = normalizedExe(exeName);
+    _blacklistedApps.erase(std::remove_if(_blacklistedApps.begin(), _blacklistedApps.end(), [&](const std::wstring& item) { return normalizedExe(item) == target; }), _blacklistedApps.end());
+    saveBlacklist(); onForegroundChanged();
+}
+static bool isBlacklisted(const std::wstring& exeName) {
+    std::wstring target = normalizedExe(exeName);
+    for (const auto& item : _blacklistedApps) if (normalizedExe(item) == target) return true;
+    return false;
+}
 
 static void queryFrontMostApp() {
     HWND w = GetForegroundWindow(); DWORD pid = 0; GetWindowThreadProcessId(w, &pid);
-    if (pid == GetCurrentProcessId()) return;   // our own windows: keep the app being typed in
+    if (pid == GetCurrentProcessId()) { _frontAppBlacklisted = isBlacklisted(_frontApp); return; }   // our own windows: keep the app being typed in
     HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     wchar_t path[MAX_PATH] = {0}; DWORD n = MAX_PATH;
     std::wstring name = L"UnknownApp";
     if (p) { if (QueryFullProcessImageNameW(p, 0, path, &n)) { std::wstring s(path); size_t i = s.find_last_of(L'\\'); name = i == std::wstring::npos ? s : s.substr(i + 1); } CloseHandle(p); }
     _frontApp = name;
+    _frontAppBlacklisted = isBlacklisted(_frontApp);
 }
 
 static std::string SmartSwitchContextKey() {
@@ -219,7 +247,7 @@ static void saveSmartSwitchKeyData() {
     prefs::setBinary(L"smartSwitchKey", savedSmartSwitchKeyData.data(), (DWORD)savedSmartSwitchKeyData.size());
 }
 static void VKLanguageChanged(bool rememberForContext) {
-    if (rememberForContext && vUseSmartSwitchKey) { setAppInputMethodStatus(SmartSwitchContextKey(), vLanguage); saveSmartSwitchKeyData(); }
+    if (rememberForContext && !_frontAppBlacklisted && vUseSmartSwitchKey) { setAppInputMethodStatus(SmartSwitchContextKey(), vLanguage); saveSmartSwitchKeyData(); }
     prefs::setInt(L"InputMethod", vLanguage);
     if (_observer) _observer(vLanguage);
 }
@@ -235,11 +263,11 @@ void onForegroundChanged() {
     _siteHost.clear();
     ResetEnglishWord(true); _autoFixUndo.active = false;
     TLEndWord("app"); _tlApp = _frontApp;
-    if (vUseSmartSwitchKey) ApplySmartSwitch();
+    if (!_frontAppBlacklisted && vUseSmartSwitchKey) ApplySmartSwitch();
     startNewSession();
 }
 void onSiteChanged(const std::wstring& host) {
-    if (host == _siteHost) return;
+    if (_frontAppBlacklisted || host == _siteHost) return;
     _siteHost = host;
     ResetEnglishWord(true); _autoFixUndo.active = false;
     if (vUseSmartSwitchKey) ApplySmartSwitch();
@@ -270,6 +298,8 @@ static void checkPauseExpired() {
 }
 
 void reloadSettings() {
+    _blacklistedApps = prefs::getStringList(L"AppBlacklist");
+    _frontAppBlacklisted = isBlacklisted(_frontApp);
     vLanguage = prefs::getInt(L"InputMethod", 1) ? 1 : 0;
     vCheckSpelling = prefs::getInt(L"Spelling", 1); vSetCheckSpelling();
     vRestoreIfWrongSpelling = prefs::getInt(L"RestoreIfInvalidWord", 1);
@@ -511,6 +541,7 @@ static LRESULT CALLBACK keyboardHook(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode != HC_ACTION) return CallNextHookEx(_kbHook, nCode, wParam, lParam);
     KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)lParam;
     if (k->dwExtraInfo == VIKEY_EVENT_TAG) return CallNextHookEx(_kbHook, nCode, wParam, lParam);   // our own output
+    if (_frontAppBlacklisted) return CallNextHookEx(_kbHook, nCode, wParam, lParam);
     bool down = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
     // modifiers as Windows has them, not only from the events seen here: keys let go on the lock screen (Win+L) or
     // after Ctrl+Alt+Del never reach the hook, and a Win or Alt left set stops Telex until that key is tapped again
@@ -589,7 +620,7 @@ static LRESULT CALLBACK keyboardHook(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 
 static LRESULT CALLBACK mouseHook(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && (wParam == WM_LBUTTONDOWN || wParam == WM_RBUTTONDOWN || wParam == WM_MBUTTONDOWN)) {
+    if (nCode == HC_ACTION && !_frontAppBlacklisted && (wParam == WM_LBUTTONDOWN || wParam == WM_RBUTTONDOWN || wParam == WM_MBUTTONDOWN)) {
         if (vEmojiOpen && vEmojiWindow) {   // a click outside the picker closes it (the picker never takes the focus)
             RECT r; GetWindowRect(vEmojiWindow, &r); POINT p = ((MSLLHOOKSTRUCT*)lParam)->pt;
             if (!PtInRect(&r, p)) PostMessageW(vEmojiWindow, WM_APP + 11, 0, 0);
@@ -606,6 +637,7 @@ static VOID CALLBACK foregroundHook(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWOR
 bool start() {
     if (_kbHook) return true;
     pData = (vKeyHookState*)vKeyInit();
+    _blacklistedApps = prefs::getStringList(L"AppBlacklist");
     reloadSettings();
     std::vector<BYTE> data = prefs::getBinary(L"smartSwitchKey");
     initSmartSwitchKey(data.data(), (int)data.size());

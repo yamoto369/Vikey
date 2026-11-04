@@ -4,6 +4,7 @@
 #pragma once
 #include <windows.h>
 #include <string>
+#include <vector>
 #include <functional>
 
 namespace vikey { namespace core {
@@ -18,6 +19,10 @@ void reloadSettings();              // after a setting changed in the registry
 void onForegroundChanged();         // called by the foreground WinEvent hook
 void onSiteChanged(const std::wstring& host);   // per-site memory (Phase 3)
 std::wstring frontAppName();
+bool isFrontAppBlacklisted();
+void addFrontAppToBlacklist();
+void removeAppFromBlacklist(const std::wstring& exeName);
+std::vector<std::wstring> blacklistedApps();
 
 /// Called on the UI thread whenever the language changes (menu icon, settings window).
 void setLanguageObserver(std::function<void(int)> f);

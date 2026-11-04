@@ -303,7 +303,7 @@ static void startRecording(HWND c) { if (Recorder* r = rec(c)) { SetFocus(c); r-
 static void destroyChildren(HWND h) { std::vector<HWND> kids; for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) kids.push_back(c); for (HWND c : kids) DestroyWindow(c); }
 
 // ---- main window -----------------------------------------------------------------------------
-enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_UPDATE, C_LOGKEYS, C_EMOJI, C_EMOJIKEY, C_FEEDBACK, C_STYLE,
+enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_UPDATE, C_LOGKEYS, C_EMOJI, C_EMOJIKEY, C_FEEDBACK, C_STYLE, C_BLACKLIST,
        L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EMOJI, O_EMOJIKEY, O_EDIT = 520 };
 static const UINT WM_REBUILD = WM_APP + 20;
 static HWND _win, _seg, _hint, _logWin, _logList, _logSummary, _logGrid, _aboutWin, _onbWin, _ackWin, _tooltip;
@@ -400,6 +400,8 @@ static void buildMain() {
     beginGroup(nullptr);
     toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
     toggleRow(L"Tự động cập nhật", L"Mỗi ngày Vikey kiểm tra bản mới trên vikey.app, tự tải về và cài khi bạn thoát Vikey hoặc tắt máy.", C_UPDATE, prefs::getInt(L"AutoUpdate", 1) != 0);
+    HWND bl = row(L"Ứng dụng không dùng bộ gõ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 120, 26, WS_TABSTOP);
+    SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
     HWND fb = row(L"Góp ý", L"Báo lỗi hoặc góp ý cho Vikey: mở trang vikey.app/feedback trong trình duyệt.", L"VikeyButton", C_FEEDBACK, 120, 26, WS_TABSTOP);
     SetWindowTextW(fb, L"Gửi góp ý…"); setBg(fb, GROUP);
     endGroup();
@@ -432,6 +434,7 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case C_EMOJI: prefs::setInt(L"EmojiPicker", toggleOn(c)); core::reloadSettings(); emoji::settingsChanged(); afterHotkeyChange(); break;
         case C_LOGIN: prefs::setLaunchAtLogin(toggleOn(c)); setToggle(c, prefs::launchAtLogin()); break;
         case C_UPDATE: prefs::setInt(L"AutoUpdate", toggleOn(c)); break;
+        case C_BLACKLIST: showBlacklist(_inst); break;
         case C_FEEDBACK: ShellExecuteW(nullptr, L"open", L"https://vikey.app/feedback?platform=windows&v=" VIKEY_VERSION_W, nullptr, nullptr, SW_SHOWNORMAL); break;
         }
         return 0; }
@@ -458,6 +461,61 @@ void showSettings(HINSTANCE inst, bool firstRun) {
     buildMain();
     centerOnMouseScreen(_win);   // Tony: open in the middle of the screen (Mac 1.0.16/1.0.18)
     bringToFront(_win);
+}
+
+// ---- application blacklist ----------------------------------------------------------------
+enum { BL_ADD = 800, BL_REMOVE, BL_DONE };
+static HWND _blacklistWin, _blacklistList;
+static void refreshBlacklistList() {
+    if (!_blacklistList) return;
+    ListView_DeleteAllItems(_blacklistList);
+    auto apps = core::blacklistedApps();
+    for (int i = 0; i < (int)apps.size(); ++i) {
+        LVITEMW item = {}; item.mask = LVIF_TEXT; item.iItem = i; item.pszText = (LPWSTR)apps[i].c_str();
+        ListView_InsertItem(_blacklistList, &item);
+    }
+}
+static LRESULT CALLBACK blacklistProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_COMMAND:
+        if (LOWORD(wp) == BL_ADD) {
+            std::wstring current = core::frontAppName();
+            if (current.empty() || current == L"UnknownApp") MessageBoxW(h, L"Không xác định được ứng dụng hiện tại.", L"Vikey", MB_OK | MB_ICONWARNING);
+            else if (core::isFrontAppBlacklisted()) MessageBoxW(h, L"Ứng dụng này đã có trong danh sách.", L"Vikey", MB_OK | MB_ICONINFORMATION);
+            else if (MessageBoxW(h, (L"Thêm " + current + L" vào danh sách không dùng bộ gõ?").c_str(), L"Vikey", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                core::addFrontAppToBlacklist(); refreshBlacklistList();
+            }
+        } else if (LOWORD(wp) == BL_REMOVE) {
+            int sel = ListView_GetNextItem(_blacklistList, -1, LVNI_SELECTED);
+            if (sel >= 0) { wchar_t exe[512] = {}; ListView_GetItemText(_blacklistList, sel, 0, exe, 512); core::removeAppFromBlacklist(exe); refreshBlacklistList(); }
+        } else if (LOWORD(wp) == BL_DONE) DestroyWindow(h);
+        return 0;
+    case WM_CLOSE: DestroyWindow(h); return 0;
+    case WM_DESTROY: _blacklistWin = nullptr; _blacklistList = nullptr; return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+void showBlacklist(HINSTANCE inst) {
+    initLook();
+    if (_blacklistWin) { bringToFront(_blacklistWin); refreshBlacklistList(); return; }
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc = {}; wc.lpfnWndProc = blacklistProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyBlacklist";
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1); wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP));
+        RegisterClassW(&wc); registered = true;
+    }
+    RECT wr = {0, 0, 430, 340}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
+    _blacklistWin = CreateWindowExW(0, L"VikeyBlacklist", L"Ứng dụng không dùng bộ gõ", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    _blacklistList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        16, 16, 382, 230, _blacklistWin, nullptr, inst, nullptr);
+    ListView_SetExtendedListViewStyle(_blacklistList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    CreateWindowW(L"STATIC", L"Thêm ứng dụng đã mở Vikey trước đó. Đưa ứng dụng khác lên trước rồi mở lại Vikey để thêm ứng dụng đó.", WS_CHILD | WS_VISIBLE, 16, 246, 382, 18, _blacklistWin, nullptr, inst, nullptr);
+    LVCOLUMNW col = {}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = (LPWSTR)L"Tên ứng dụng (EXE)"; col.cx = 360; ListView_InsertColumn(_blacklistList, 0, &col);
+    CreateWindowW(L"BUTTON", L"Thêm ứng dụng hiện tại", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 16, 278, 176, 28, _blacklistWin, (HMENU)(INT_PTR)BL_ADD, inst, nullptr);
+    CreateWindowW(L"BUTTON", L"Gỡ khỏi danh sách", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 202, 278, 130, 28, _blacklistWin, (HMENU)(INT_PTR)BL_REMOVE, inst, nullptr);
+    CreateWindowW(L"BUTTON", L"Đóng", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 340, 278, 58, 28, _blacklistWin, (HMENU)(INT_PTR)BL_DONE, inst, nullptr);
+    refreshBlacklistList(); centerOnMouseScreen(_blacklistWin); bringToFront(_blacklistWin);
 }
 
 // ---- onboarding (OnboardingView.swift: welcome, practice, hotkey, emoji; no Accessibility on Windows) --------

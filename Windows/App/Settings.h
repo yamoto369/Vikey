@@ -7,5 +7,6 @@ void showOnboarding(HINSTANCE inst);
 void showAbout(HINSTANCE inst);
 void showAcknowledgements(HINSTANCE inst);
 void showTypingLog(HINSTANCE inst);
+void showBlacklist(HINSTANCE inst);
 void languageChanged(int lang);
 }}
