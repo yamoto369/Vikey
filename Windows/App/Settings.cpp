@@ -374,8 +374,9 @@ static void buildMain() {
     nav(L"Gõ tiếng Việt", C_NAV_TYPING, 1, 152);
     nav(L"Nâng cao", C_NAV_ADVANCED, 2, 200);
 
-    _hint = child(L"STATIC", L"Vikey", SS_LEFT, 0, 0, 1, 1, 0, fSmall);
-    _seg = nullptr;
+    _hint = child(L"STATIC", L"", SS_LEFT, 0, 0, 1, 1, 0, fSmall);
+    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164, 24, 164, 32, C_SEG);
+    languageChanged(core::language());
     _y = 104;
     if (_settingsPage == 0) {
         beginGroup(L"Chuyển đổi");
