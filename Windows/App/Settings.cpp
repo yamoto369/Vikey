@@ -422,7 +422,7 @@ static void buildMain() {
         for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
         SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
         SetWindowPos(style, nullptr, W - MARGIN - 18 - 210, _y - ROW + 6, 210, 240, SWP_NOZORDER);
-        HWND mark = row(L"Đặt dấu", L"Chọn vị trí dấu thanh cho các tổ hợp oa, oe và uy.", L"COMBOBOX", C_MARK, 180, 220, CBS_DROPDOWNLIST | WS_TABSTOP);
+        HWND mark = row(L"Đặt dấu", L"Chọn vị trí dấu thanh cho các tổ hợp oa, oe và uy.", L"COMBOBOX", C_MARK, 180, 220, CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP);
         SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy");
         SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
         SetWindowPos(mark, nullptr, W - MARGIN - 18 - 180, _y - ROW + 6, 180, 220, SWP_NOZORDER);
