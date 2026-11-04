@@ -439,15 +439,18 @@ void showSettings(HINSTANCE inst, bool firstRun) {
 }
 
 // ---- application blacklist ----------------------------------------------------------------
-enum { BL_ADD = 800, BL_REMOVE, BL_DONE };
+enum { BL_ADD = 800, BL_DONE };
 static HWND _blacklistWin, _blacklistList;
+static const COLORREF BL_REMOVE_COLOR = RGB(120, 64, 38); // dark brown, intentionally quieter than the primary action
+
 static void refreshBlacklistList() {
     if (!_blacklistList) return;
     ListView_DeleteAllItems(_blacklistList);
     auto apps = core::blacklistedApps();
     for (int i = 0; i < (int)apps.size(); ++i) {
         LVITEMW item = {}; item.mask = LVIF_TEXT; item.iItem = i; item.pszText = (LPWSTR)apps[i].c_str();
-        ListView_InsertItem(_blacklistList, &item);
+        int row = ListView_InsertItem(_blacklistList, &item);
+        ListView_SetItemText(_blacklistList, row, 1, (LPWSTR)L"");
     }
 }
 static LRESULT CALLBACK blacklistProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
@@ -460,11 +463,37 @@ static LRESULT CALLBACK blacklistProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             else if (MessageBoxW(h, (L"Thêm " + current + L" vào danh sách không dùng bộ gõ?").c_str(), L"Vikey", MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 core::addFrontAppToBlacklist(); refreshBlacklistList();
             }
-        } else if (LOWORD(wp) == BL_REMOVE) {
-            int sel = ListView_GetNextItem(_blacklistList, -1, LVNI_SELECTED);
-            if (sel >= 0) { wchar_t exe[512] = {}; ListView_GetItemText(_blacklistList, sel, 0, exe, 512); core::removeAppFromBlacklist(exe); refreshBlacklistList(); }
         } else if (LOWORD(wp) == BL_DONE) DestroyWindow(h);
         return 0;
+    case WM_NOTIFY: {
+        NMHDR* hdr = (NMHDR*)lp;
+        if (hdr->hwndFrom != _blacklistList) break;
+        if (hdr->code == NM_CUSTOMDRAW) {
+            NMLVCUSTOMDRAW* cd = (NMLVCUSTOMDRAW*)lp;
+            if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+            if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) return CDRF_NOTIFYSUBITEMDRAW;
+            if (cd->nmcd.dwDrawStage == (CDDS_ITEMPREPAINT | CDDS_SUBITEM) && cd->iSubItem == 1)
+                return CDRF_NOTIFYPOSTPAINT;
+            if (cd->nmcd.dwDrawStage == (CDDS_ITEMPOSTPAINT | CDDS_SUBITEM) && cd->iSubItem == 1) {
+                RECT r = cd->nmcd.rc;
+                SetBkMode(cd->nmcd.hdc, TRANSPARENT);
+                SetTextColor(cd->nmcd.hdc, BL_REMOVE_COLOR);
+                HFONT old = (HFONT)SelectObject(cd->nmcd.hdc, fBodyBold);
+                DrawTextW(cd->nmcd.hdc, L"×", 1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                SelectObject(cd->nmcd.hdc, old);
+                return CDRF_DODEFAULT;
+            }
+        } else if (hdr->code == NM_CLICK) {
+            NMITEMACTIVATE* hit = (NMITEMACTIVATE*)lp;
+            if (hit->iItem >= 0 && hit->iSubItem == 1) {
+                wchar_t exe[512] = {};
+                ListView_GetItemText(_blacklistList, hit->iItem, 0, exe, 512);
+                if (exe[0]) { core::removeAppFromBlacklist(exe); refreshBlacklistList(); }
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY: _blacklistWin = nullptr; _blacklistList = nullptr; return 0;
     }
@@ -479,18 +508,35 @@ void showBlacklist(HINSTANCE inst) {
         wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1); wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP));
         RegisterClassW(&wc); registered = true;
     }
-    RECT wr = {0, 0, 430, 340}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
+    RECT wr = {0, 0, 520, 390}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
     _blacklistWin = CreateWindowExW(0, L"VikeyBlacklist", L"Ứng dụng không dùng bộ gõ", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
     applyFluentFrame(_blacklistWin);
+
     _blacklistList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-        16, 16, 382, 230, _blacklistWin, nullptr, inst, nullptr);
+        20, 18, 480, 250, _blacklistWin, nullptr, inst, nullptr);
     ListView_SetExtendedListViewStyle(_blacklistList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
-    CreateWindowW(L"STATIC", L"Thêm ứng dụng đã mở Vikey trước đó. Đưa ứng dụng khác lên trước rồi mở lại Vikey để thêm ứng dụng đó.", WS_CHILD | WS_VISIBLE, 16, 246, 382, 18, _blacklistWin, nullptr, inst, nullptr);
-    LVCOLUMNW col = {}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = (LPWSTR)L"Tên ứng dụng (EXE)"; col.cx = 360; ListView_InsertColumn(_blacklistList, 0, &col);
-    CreateWindowW(L"BUTTON", L"Thêm ứng dụng hiện tại", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 16, 278, 176, 28, _blacklistWin, (HMENU)(INT_PTR)BL_ADD, inst, nullptr);
-    CreateWindowW(L"BUTTON", L"Gỡ khỏi danh sách", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 202, 278, 130, 28, _blacklistWin, (HMENU)(INT_PTR)BL_REMOVE, inst, nullptr);
-    CreateWindowW(L"BUTTON", L"Đóng", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 340, 278, 58, 28, _blacklistWin, (HMENU)(INT_PTR)BL_DONE, inst, nullptr);
+    SendMessageW(_blacklistList, WM_SETFONT, (WPARAM)fBody, TRUE);
+    HWND header = ListView_GetHeader(_blacklistList);
+    if (header) SendMessageW(header, WM_SETFONT, (WPARAM)fBodyBold, TRUE);
+
+    LVCOLUMNW nameCol = {}; nameCol.mask = LVCF_TEXT | LVCF_WIDTH; nameCol.pszText = (LPWSTR)L"Tên ứng dụng (EXE)"; nameCol.cx = 432;
+    ListView_InsertColumn(_blacklistList, 0, &nameCol);
+    LVCOLUMNW removeCol = {}; removeCol.mask = LVCF_TEXT | LVCF_WIDTH; removeCol.pszText = (LPWSTR)L""; removeCol.cx = 44;
+    ListView_InsertColumn(_blacklistList, 1, &removeCol);
+
+    HWND note = CreateWindowW(L"STATIC",
+        L"Thêm ứng dụng đã mở Vikey trước đó. Đưa ứng dụng khác lên trước rồi mở lại Vikey để thêm ứng dụng đó.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, 20, 280, 480, 42, _blacklistWin, nullptr, inst, nullptr);
+    SendMessageW(note, WM_SETFONT, (WPARAM)fSmall, TRUE);
+
+    HWND add = CreateWindowW(L"BUTTON", L"Thêm ứng dụng hiện tại", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        20, 338, 190, 32, _blacklistWin, (HMENU)(INT_PTR)BL_ADD, inst, nullptr);
+    SendMessageW(add, WM_SETFONT, (WPARAM)fBody, TRUE);
+    HWND done = CreateWindowW(L"BUTTON", L"Đóng", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        422, 338, 78, 32, _blacklistWin, (HMENU)(INT_PTR)BL_DONE, inst, nullptr);
+    SendMessageW(done, WM_SETFONT, (WPARAM)fBody, TRUE);
+
     refreshBlacklistList(); centerOnMouseScreen(_blacklistWin); bringToFront(_blacklistWin);
 }
 
