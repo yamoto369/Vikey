@@ -476,16 +476,7 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 RECT tr = r; tr.left += 12; tr.right -= 28;
                 DrawTextW(di->hDC, label, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             }
-            if (di->itemState & ODS_COMBOBOXEDIT) {
-                int cx = r.right - 18, cy = (r.top + r.bottom) / 2;
-                POINT pts[3] = {{cx - 4, cy - 2}, {cx + 4, cy - 2}, {cx, cy + 2}};
-                HBRUSH arrow = CreateSolidBrush(SECONDARY);
-                HPEN pen = CreatePen(PS_SOLID, 1, SECONDARY);
-                HGDIOBJ oldBrush = SelectObject(di->hDC, arrow), oldPen = SelectObject(di->hDC, pen);
-                Polygon(di->hDC, pts, 3);
-                SelectObject(di->hDC, oldBrush); SelectObject(di->hDC, oldPen);
-                DeleteObject(arrow); DeleteObject(pen);
-            }
+            // The native combo button already paints its dropdown chevron; do not draw a second one.
             if (focused) DrawFocusRect(di->hDC, &r);
             return TRUE;
         }
