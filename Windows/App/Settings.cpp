@@ -34,7 +34,7 @@ static HFONT fBody, fBodyBold, fSmall, fWordmark, fTitle, fMono, fTitle2, fCallo
 static const COLORREF BG = RGB(245, 247, 250), GROUP = RGB(255, 255, 255), BORDER = RGB(226, 232, 240), SEP = RGB(237, 241, 246);
 static const COLORREF TEXT = RGB(31, 41, 55), SECONDARY = RGB(100, 116, 139), TERTIARY = RGB(148, 163, 184), ACCENT = RGB(37, 99, 235), GREEN = RGB(22, 163, 74), TOGGLE_OFF = RGB(226, 232, 240);
 static const COLORREF BRAND = RGB(37, 99, 235);   // Fluent-inspired blue accent
-static const int W = 620, MARGIN = 24, ROW = 42, GAP = 14, RADIUS = 12;
+static const int W = 920, MARGIN = 24, CONTENT_X = 220, ROW = 44, GAP = 16, RADIUS = 12;
 static ULONG_PTR gdipToken = 0;
 static HINSTANCE _inst;
 static void initLook() {
@@ -290,9 +290,11 @@ static void destroyChildren(HWND h) { std::vector<HWND> kids; for (HWND c = GetW
 
 // ---- main window -----------------------------------------------------------------------------
 enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_UPDATE, C_LOGKEYS, C_STYLE, C_BLACKLIST,
-       L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520 };
+       L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520,
+       C_NAV_GENERAL = 600, C_NAV_TYPING, C_NAV_ADVANCED };
 static const UINT WM_REBUILD = WM_APP + 20;
 static HWND _win, _seg, _hint, _logWin, _logList, _logSummary, _logGrid, _aboutWin, _onbWin, _ackWin, _tooltip;
+static int _settingsPage = 0;
 static std::map<int, HWND> _ctl;
 struct Group { int top, bottom; }; static std::vector<Group> _groups; static std::vector<std::pair<int, std::wstring>> _titles;   // y, title
 static std::vector<int> _seps;
@@ -304,14 +306,14 @@ static void addTip(HWND tip, const wchar_t* text) {
 }
 /// One form row: label (+ tip) on the left, a control on the right. Returns the control.
 static int _y; static int _groupTop = -1;
-static void beginGroup(const wchar_t* title) { if (title) { _titles.push_back({_y, title}); _y += 26; } _groupTop = _y; }
+static void beginGroup(const wchar_t* title) { if (title) { _titles.push_back({_y, title}); _y += 28; } _groupTop = _y; }
 static void endGroup() { _groups.push_back({_groupTop, _y}); _y += GAP; }
 static void rowLabel(const wchar_t* label, const wchar_t* tip) {
     if (_y != _groupTop) _seps.push_back(_y);
     int ly = _y + (ROW - 22) / 2;
-    child(L"STATIC", label, SS_LEFT | SS_NOPREFIX, MARGIN + 18, ly, 360, 22, 0, fBody);
+    child(L"STATIC", label, SS_LEFT | SS_NOPREFIX, CONTENT_X + 18, ly, 360, 24, 0, fBody);
     HDC dc = GetDC(_win); int lw = textWidth(dc, fBody, label); ReleaseDC(_win, dc);
-    if (tip) { HWND t = child(L"VikeyTip", tip, 0, MARGIN + 18 + lw + 8, ly + 3, 16, 16, 0); addTip(t, tip); }
+    if (tip) { HWND t = child(L"VikeyTip", tip, 0, CONTENT_X + 18 + lw + 8, ly + 4, 16, 16, 0); addTip(t, tip); }
 }
 static HWND row(const wchar_t* label, const wchar_t* tip, const wchar_t* cls, int id, int cw, int ch, DWORD style = 0) {
     rowLabel(label, tip);
@@ -321,7 +323,7 @@ static HWND row(const wchar_t* label, const wchar_t* tip, const wchar_t* cls, in
 static HWND toggleRow(const wchar_t* label, const wchar_t* tip, int id, bool on) { HWND c = row(label, tip, L"VikeyToggle", id, 40, 23); setToggle(c, on); return c; }
 static HWND recorderRow(const wchar_t* label, const wchar_t* tip, const wchar_t* pref, int value, int id) {
     rowLabel(label, tip);
-    HWND c = makeRecorder(_win, pref, value, W - MARGIN - 18 - 150, _y + (ROW - 30) / 2, 150, 30, id, GROUP);
+    HWND c = makeRecorder(_win, pref, value, W - MARGIN - 18 - 170, _y + (ROW - 32) / 2, 170, 32, id, GROUP);
     _ctl[id] = c; _y += ROW; return c;
 }
 
@@ -336,14 +338,24 @@ static void paintMain(HWND h) {
     PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps); RECT rc; GetClientRect(h, &rc);
     HBRUSH bg = CreateSolidBrush(BG); FillRect(dc, &rc, bg); DeleteObject(bg);
     Graphics g(dc); g.SetSmoothingMode(SmoothingModeAntiAlias);
-    for (auto& gr : _groups) roundRect(g, RectF((float)MARGIN, (float)gr.top, (float)(W - 2 * MARGIN), (float)(gr.bottom - gr.top)), RADIUS, gp(GROUP), gp(BORDER));
-    Pen sep(gp(SEP), 1); for (int y : _seps) g.DrawLine(&sep, MARGIN + 18, y, W - MARGIN - 18, y);
+    // Persistent navigation rail and separate content canvas.
+    roundRect(g, RectF(8, 8, 194, (float)rc.bottom - 16), 14, gp(GROUP), gp(BORDER));
+    roundRect(g, RectF((float)CONTENT_X, 8, (float)(W - CONTENT_X - MARGIN), (float)rc.bottom - 16), 14, gp(BG), Color(0, 0, 0, 0));
+    for (auto& gr : _groups) roundRect(g, RectF((float)CONTENT_X, (float)gr.top, (float)(W - CONTENT_X - MARGIN), (float)(gr.bottom - gr.top)), RADIUS, gp(GROUP), gp(BORDER));
+    Pen sep(gp(SEP), 1); for (int y : _seps) g.DrawLine(&sep, CONTENT_X + 18, y, W - MARGIN - 18, y);
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, TEXT);
-    SelectObject(dc, fTitle); for (auto& t : _titles) { RECT r = {MARGIN + 18, t.first + 2, W - MARGIN, t.first + 28}; SetTextColor(dc, BRAND); DrawTextW(dc, t.second.c_str(), -1, &r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX); }
-    // header: icon, wordmark
-    HICON icon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 44, 44, LR_DEFAULTCOLOR);
-    if (icon) { DrawIconEx(dc, MARGIN, 16, icon, 44, 44, 0, nullptr, DI_NORMAL); DestroyIcon(icon); }
-    drawWordmark(dc, fWordmark, MARGIN + 56, 10);
+    SelectObject(dc, fTitle); for (auto& t : _titles) { RECT r = {CONTENT_X + 18, t.first + 2, W - MARGIN, t.first + 28}; SetTextColor(dc, BRAND); DrawTextW(dc, t.second.c_str(), -1, &r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX); }
+    // Brand and page header.
+    drawWordmark(dc, fWordmark, 24, 22);
+    SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
+    RECT navCaption = {24, 68, 180, 92}; DrawTextW(dc, L"CÀI ĐẶT", -1, &navCaption, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, fTitle2); SetTextColor(dc, TEXT);
+    const wchar_t* pageTitle = _settingsPage == 0 ? L"Tổng quan" : (_settingsPage == 1 ? L"Gõ tiếng Việt" : L"Nâng cao");
+    RECT titleRect = {CONTENT_X + 18, 22, W - MARGIN, 54}; DrawTextW(dc, pageTitle, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
+    const wchar_t* subtitle = _settingsPage == 0 ? L"Thiết lập cách chuyển đổi và hành vi nhập liệu." :
+        (_settingsPage == 1 ? L"Tùy chỉnh kiểu gõ và quy tắc tiếng Việt." : L"Quản lý ghi nhớ, khởi động và ứng dụng ngoại lệ.");
+    RECT subRect = {CONTENT_X + 19, 54, W - MARGIN, 76}; DrawTextW(dc, subtitle, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     EndPaint(h, &ps);
 }
 
@@ -351,44 +363,62 @@ static void buildMain() {
     destroyChildren(_win);
     if (_tooltip) { DestroyWindow(_tooltip); _tooltip = nullptr; }
     _groups.clear(); _titles.clear(); _seps.clear(); _ctl.clear();
-    // header
-    _hint = child(L"STATIC", L"", SS_LEFT, MARGIN + 56, 45, 260, 20, 0, fSmall); setHint();   // under the wordmark's descender (the y was cut)
-    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164, 24, 164, 32, C_SEG); languageChanged(core::language());
-    _y = 78;
-    int hk = currentHotkey();
-    beginGroup(nullptr);
-    recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", hk, C_HOTKEY);
-    toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt: lên giọng khi sang tiếng Việt, xuống giọng khi sang tiếng Anh.", C_BEEP, HAS_BEEP(hk) != 0);
-    endGroup();
-    beginGroup(L"Tự chuyển");
-    toggleRow(L"Tự chuyển Anh/Việt", L"Gõ một từ tiếng Anh khi đang ở tiếng Việt (hoặc ngược lại), Vikey tự sửa từ đó và chuyển chế độ. Bấm Xoá ngay sau đó để hoàn tác.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
-    toggleRow(L"Tạm dừng 5 giây", L"Khi bạn tự bấm chuyển Anh/Việt, Vikey không tự chuyển trong 5 giây, để giữ đúng lựa chọn của bạn.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
-    toggleRow(L"Nhớ theo ứng dụng", L"Vikey nhớ bạn dùng tiếng Anh hay tiếng Việt ở mỗi ứng dụng và tự chuyển lại khi bạn quay về ứng dụng đó.", C_SMART, prefs::getInt(L"UseSmartSwitchKey", 1) != 0);
-    toggleRow(L"Nhớ theo trang web", L"Trong Chrome, Edge, Brave, Vivaldi, Opera, Firefox: nhớ tiếng Anh hay tiếng Việt cho từng trang web. Chỉ đọc địa chỉ tab đang mở, ngay trên máy bạn.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
-    endGroup();
-    beginGroup(L"Gõ tiếng Việt");
-    HWND style = row(L"Kiểu gõ", L"Telex: [ ra ơ, ] ra ư, w ra ư. Telex đơn giản 1: [ ] là dấu ngoặc, w đứng riêng vẫn là w. Telex đơn giản 2: [ ] là dấu ngoặc, w vẫn ra ư. Cả ba kiểu đều gõ uw, ow, aw ra ư, ơ, ă.", L"COMBOBOX", C_STYLE, 170, 220, CBS_DROPDOWNLIST | WS_TABSTOP);
-    for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
-    SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
-    SetWindowPos(style, nullptr, W - MARGIN - 18 - 170, _y - ROW + 6, 170, 220, SWP_NOZORDER);
-    HWND mark = row(L"Đặt dấu", L"Vị trí dấu thanh với oa, oe, uy: kiểu mới (hoà, thuý) hoặc kiểu cũ (hòa, thúy).", L"COMBOBOX", C_MARK, 140, 220, CBS_DROPDOWNLIST | WS_TABSTOP);
-    SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy"); SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
-    SetWindowPos(mark, nullptr, W - MARGIN - 18 - 140, _y - ROW + 6, 140, 220, SWP_NOZORDER);
-    toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
-    toggleRow(L"Trả lại phím khi sai", L"Khi gõ xong một từ sai chính tả tiếng Việt, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
-    endGroup();
-    beginGroup(nullptr);
-    toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
-    toggleRow(L"Tự động cập nhật", L"Mỗi ngày Vikey kiểm tra bản mới trên vikey.app, tự tải về và cài khi bạn thoát Vikey hoặc tắt máy.", C_UPDATE, prefs::getInt(L"AutoUpdate", 1) != 0);
-    HWND bl = row(L"Ứng dụng không dùng bộ gõ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 120, 26, WS_TABSTOP);
-    SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
-    endGroup();
-    refreshEnabled();
-    RECT wr = {0, 0, W, _y}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
-    SetWindowPos(_win, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    RedrawWindow(_win, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);   // a rebuilt combo box kept stale pixels
-}
 
+    // Sidebar navigation uses the same custom Fluent button primitive as the rest of the app.
+    auto nav = [&](const wchar_t* label, int id, int page, int y) {
+        HWND b = makeChild(_win, L"VikeyButton", label, WS_TABSTOP, 20, y, 170, 40, id);
+        SetWindowLongPtrW(b, GWLP_USERDATA, page == _settingsPage ? 1 : 0);
+        setBg(b, GROUP);
+    };
+    nav(L"Tổng quan", C_NAV_GENERAL, 0, 104);
+    nav(L"Gõ tiếng Việt", C_NAV_TYPING, 1, 152);
+    nav(L"Nâng cao", C_NAV_ADVANCED, 2, 200);
+
+    _hint = child(L"STATIC", L"Vikey", SS_LEFT, 0, 0, 1, 1, 0, fSmall);
+    _seg = nullptr;
+    _y = 104;
+    if (_settingsPage == 0) {
+        beginGroup(L"Chuyển đổi");
+        recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", currentHotkey(), C_HOTKEY);
+        toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt.", C_BEEP, HAS_BEEP(currentHotkey()) != 0);
+        endGroup();
+        beginGroup(L"Tự động");
+        toggleRow(L"Tự chuyển Anh/Việt", L"Tự nhận biết và chuyển chế độ khi bạn bắt đầu gõ ngôn ngữ còn lại.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
+        toggleRow(L"Tạm dừng 5 giây", L"Khi bạn tự bấm chuyển Anh/Việt, Vikey tạm dừng tự chuyển trong 5 giây.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
+        endGroup();
+    } else if (_settingsPage == 1) {
+        beginGroup(L"Kiểu gõ");
+        HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"COMBOBOX", C_STYLE, 210, 240, CBS_DROPDOWNLIST | WS_TABSTOP);
+        for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
+        SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
+        SetWindowPos(style, nullptr, W - MARGIN - 18 - 210, _y - ROW + 6, 210, 240, SWP_NOZORDER);
+        HWND mark = row(L"Đặt dấu", L"Chọn vị trí dấu thanh cho các tổ hợp oa, oe và uy.", L"COMBOBOX", C_MARK, 180, 220, CBS_DROPDOWNLIST | WS_TABSTOP);
+        SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy");
+        SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
+        SetWindowPos(mark, nullptr, W - MARGIN - 18 - 180, _y - ROW + 6, 180, 220, SWP_NOZORDER);
+        endGroup();
+        beginGroup(L"Kiểm tra");
+        toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
+        toggleRow(L"Trả lại phím khi sai", L"Khi từ sai chính tả, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
+        endGroup();
+    } else {
+        beginGroup(L"Ghi nhớ");
+        toggleRow(L"Nhớ theo ứng dụng", L"Nhớ chế độ tiếng Anh hoặc tiếng Việt riêng cho từng ứng dụng.", C_SMART, prefs::getInt(L"UseSmartSwitchKey", 1) != 0);
+        toggleRow(L"Nhớ theo trang web", L"Nhớ chế độ nhập liệu cho từng trang web trong trình duyệt được hỗ trợ.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
+        endGroup();
+        beginGroup(L"Hệ thống");
+        toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
+        toggleRow(L"Tự động cập nhật", L"Kiểm tra và cài đặt phiên bản mới khi có bản cập nhật.", C_UPDATE, prefs::getInt(L"AutoUpdate", 1) != 0);
+        HWND bl = row(L"Ứng dụng ngoại lệ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 132, 32, WS_TABSTOP);
+        SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
+        endGroup();
+    }
+    refreshEnabled();
+    RECT wr = {0, 0, W, 620};
+    AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
+    SetWindowPos(_win, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    RedrawWindow(_win, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
 static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: paintMain(h); return 0;
@@ -397,6 +427,9 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         int id = LOWORD(wp); HWND c = (HWND)lp;
         auto flag = [&](const wchar_t* pref) { prefs::setInt(pref, toggleOn(c)); core::reloadSettings(); refreshEnabled(); };
         switch (id) {
+        case C_NAV_GENERAL: _settingsPage = 0; buildMain(); break;
+        case C_NAV_TYPING: _settingsPage = 1; buildMain(); break;
+        case C_NAV_ADVANCED: _settingsPage = 2; buildMain(); break;
         case C_SEG: core::setLanguageByUser(GetWindowLongPtrW(_seg, GWLP_USERDATA) == 0 ? 1 : 0); break;
         case C_HOTKEY: setHint(); break;
         case C_BEEP: { int hk = (currentHotkey() & ~0x8000) | (toggleOn(c) ? 0x8000 : 0); prefs::setInt(L"SwitchKeyStatus", hk); if (Recorder* r = rec(_ctl[C_HOTKEY])) r->value = hk; core::reloadSettings(); afterHotkeyChange(); break; }
@@ -431,7 +464,7 @@ void showSettings(HINSTANCE inst, bool firstRun) {
     if (_win) { bringToFront(_win); return; }
     static bool reg = false;
     if (!reg) { WNDCLASSW wc = {}; wc.lpfnWndProc = mainProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyMain"; wc.hbrBackground = nullptr; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP)); RegisterClassW(&wc); reg = true; }
-    _win = CreateWindowExW(0, L"VikeyMain", L"Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN, 0, 0, W, 600, nullptr, nullptr, inst, nullptr);
+    _win = CreateWindowExW(0, L"VikeyMain", L"Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN, 0, 0, W, 620, nullptr, nullptr, inst, nullptr);
     applyFluentFrame(_win);
     buildMain();
     centerOnMouseScreen(_win);   // Tony: open in the middle of the screen (Mac 1.0.16/1.0.18)
