@@ -12,8 +12,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 AS = os.path.dirname(HERE)
 GOLD = os.path.join(HERE, 'golden')
 TMP = os.environ.get('TMPDIR', '/tmp')
-SIM = os.path.join(AS, 'sim', 'sim')
-HARNESS = os.path.join(AS, 'test', 'harness')
+SIM = os.environ.get('VIKEY_SIM', os.path.join(AS, 'sim', 'sim'))
+HARNESS = os.environ.get('VIKEY_HARNESS', os.path.join(AS, 'test', 'harness'))
 update = len(sys.argv) > 1 and sys.argv[1] == 'update'
 os.makedirs(GOLD, exist_ok=True)
 failed = False
@@ -22,7 +22,7 @@ CORPORA = {'chat': 'chat_messages.txt', 'synthetic': 'synthetic_val.txt'}   # si
 
 def units(typos, corpus='chat'):
     out = os.path.join(TMP, f'golden_{corpus}_{typos}.units')
-    args = ['python3', os.path.join(AS, 'sim', 'prep.py'), os.path.join(AS, 'sim', 'corpus', CORPORA[corpus])]
+    args = [sys.executable, os.path.join(AS, 'sim', 'prep.py'), os.path.join(AS, 'sim', 'corpus', CORPORA[corpus])]
     if typos: args += ['--typos', str(typos)]
     with open(out, 'w') as f: subprocess.run(args, stdout=f, check=True)
     return out

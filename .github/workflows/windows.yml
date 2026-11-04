@@ -1,5 +1,4 @@
-
-name: windows
+name: Windows build
 
 on:
   workflow_dispatch:
@@ -13,7 +12,31 @@ permissions:
   contents: write
 
 jobs:
-  engine:
+  engine-check:
+    name: Engine validation
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+        shell: pwsh
+
+      - name: Validate shared typing engine
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File Windows/check.ps1
+        shell: pwsh
+
+  build:
+    name: Build Windows (${{ matrix.arch }})
+    needs: engine-check
     strategy:
       fail-fast: false
       matrix:
@@ -22,7 +45,6 @@ jobs:
             arch: x64
           - runner: windows-11-arm
             arch: arm64
-
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -38,10 +60,6 @@ jobs:
 
       - name: Install Ninja
         run: choco install ninja -y --no-progress
-        shell: pwsh
-
-      - name: Engine lock (rule cases, golden, Telex lock, driver parity, perf)
-        run: pwsh Windows/check.ps1
         shell: pwsh
 
       - name: Build app (version from project.yml)
@@ -60,7 +78,8 @@ jobs:
           path: Windows/build/App/Vikey.exe
 
   package:
-    needs: engine
+    name: Package installers
+    needs: build
     runs-on: windows-latest
 
     env:
@@ -124,7 +143,6 @@ jobs:
           Get-ChildItem dist | Out-Host
         shell: pwsh
 
-      # Build only: save files as GitHub Actions Artifacts.
       - name: Upload build artifacts
         if: inputs.release_tag == ''
         uses: actions/upload-artifact@v4
@@ -133,7 +151,6 @@ jobs:
           path: dist/*
           retention-days: 30
 
-      # Release: create GitHub Release if it does not exist.
       - name: Create release if not exists
         if: inputs.release_tag != ''
         env:
@@ -156,7 +173,6 @@ jobs:
           }
         shell: pwsh
 
-      # Release: upload installers and portable ZIPs.
       - name: Upload to GitHub Release
         if: inputs.release_tag != ''
         env:
