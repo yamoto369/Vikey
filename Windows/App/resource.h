@@ -2,7 +2,6 @@
 #define IDI_APP 101
 #define IDR_SOUND_VI 201
 #define IDR_SOUND_EN 202
-#define IDR_EMOJI_JSON 203
 #ifndef VIKEY_VERSION
 #define VIKEY_VERSION "0.1.0"
 #endif

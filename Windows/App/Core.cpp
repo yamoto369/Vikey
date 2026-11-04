@@ -19,10 +19,6 @@
 int vLanguage = 1, vSwitchKeyStatus = 0x7A000206, vCheckSpelling = 1, vUseModernOrthography = 1;
 int vRestoreIfWrongSpelling = 1, vFixRecommendBrowser = 1, vUseSmartSwitchKey = 1, vOtherLanguage = 1;
 int vAutoSwitchByTyping = 1, vPerformLayoutCompat = 0;
-// Emoji picker (Settings.cpp): its hotkey (0 = off); while it is open keys go to the picker, not the engine
-static int vEmojiHotkey = 0;
-static volatile bool vEmojiOpen = false;
-static HWND vEmojiWindow = nullptr;
 
 namespace vikey { namespace core {
 
@@ -311,7 +307,6 @@ void reloadSettings() {
     vTypingLogEnabled = prefs::getInt(L"TypingLogEnabled", 0);
     int hotkey = prefs::getInt(L"SwitchKeyStatus", 0);
     vSwitchKeyStatus = hotkey ? hotkey : 0x7A000206;   // default Alt+Z (same bits as ⌥Z on macOS)
-    vEmojiHotkey = prefs::getInt(L"EmojiPicker", 0) ? prefs::getInt(L"EmojiHotkey", 0) : 0;
     updateOtherInputLanguage();
     if (_observer) _observer(vLanguage);
 }
@@ -394,16 +389,7 @@ void setLanguageQuiet(int lang) {
 int language() { return vLanguage; }
 void setLanguageObserver(std::function<void(int)> f) { _observer = f; }
 
-// ---- Emoji picker (Settings.cpp) ------------------------------------------------------------
-static std::function<void()> _emojiHandler;
-void setEmojiHotkeyHandler(std::function<void()> f) { _emojiHandler = f; }
-void setEmojiPickerOpen(bool open, HWND picker) { vEmojiWindow = picker; vEmojiOpen = open; }
 void resetTyping() { ResetEnglishWord(true); _autoFixUndo.active = false; startNewSession(); }
-void insertText(const std::wstring& text) {
-    resetTyping();
-    batchText(text.c_str(), (int)text.size());   // KEYEVENTF_UNICODE per UTF-16 unit: surrogate pairs arrive as one character
-    flushBatch();
-}
 
 // ---- Auto switch helpers (same as VikeyCore.mm) ---------------------------------------------
 static bool IsWhitespaceKey(Uint16 key) { return key == KEY_SPACE || key == KEY_RETURN || key == KEY_ENTER || key == KEY_TAB; }
@@ -565,20 +551,6 @@ static LRESULT CALLBACK keyboardHook(int nCode, WPARAM wParam, LPARAM lParam) {
 
     _keycode = engineKey(k->vkCode);
     _keyVk = k->vkCode; _keyExtended = (k->flags & LLKHF_EXTENDED) ? KEYEVENTF_EXTENDEDKEY : 0;
-    // emoji picker hotkey (opens and closes it): a key with exactly these modifiers
-    if (vEmojiHotkey && GET_SWITCH_KEY(vEmojiHotkey) == _keycode &&
-        HAS_CONTROL(vEmojiHotkey) == GET_BOOL(_flag & F_CONTROL) && HAS_OPTION(vEmojiHotkey) == GET_BOOL(_flag & F_ALT) &&
-        HAS_COMMAND(vEmojiHotkey) == GET_BOOL(_flag & F_WIN) && HAS_SHIFT(vEmojiHotkey) == GET_BOOL(_flag & F_SHIFT)) {
-        if (_emojiHandler) _emojiHandler();
-        return 1;
-    }
-    // while open, the picker reads the keys for its search (it does its own Telex reading); the app in front keeps
-    // its cursor. Characters sent by other tools (VK_PACKET) go to it as characters.
-    if (vEmojiOpen && vEmojiWindow) {
-        if (k->vkCode == VK_PACKET) PostMessageW(vEmojiWindow, WM_APP + 12, k->scanCode, 0);
-        else PostMessageW(vEmojiWindow, WM_APP + 10, k->vkCode, (LPARAM)_flag);
-        return 1;
-    }
     if (_keycode == KEY_EMPTY) {   // F-keys, media keys...: not ours. A key typing a character still ends the word.
         _lastFlag = 0;   // Ctrl+Shift+F5, Ctrl+Shift+numpad +: releasing Ctrl+Shift afterwards isn't the hotkey
         if (unmodeledKeyEndsWord(k->vkCode)) { TLEndWord("other"); resetTyping(); }
@@ -621,10 +593,6 @@ static LRESULT CALLBACK keyboardHook(int nCode, WPARAM wParam, LPARAM lParam) {
 
 static LRESULT CALLBACK mouseHook(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && !_frontAppBlacklisted && (wParam == WM_LBUTTONDOWN || wParam == WM_RBUTTONDOWN || wParam == WM_MBUTTONDOWN)) {
-        if (vEmojiOpen && vEmojiWindow) {   // a click outside the picker closes it (the picker never takes the focus)
-            RECT r; GetWindowRect(vEmojiWindow, &r); POINT p = ((MSLLHOOKSTRUCT*)lParam)->pt;
-            if (!PtInRect(&r, p)) PostMessageW(vEmojiWindow, WM_APP + 11, 0, 0);
-        }
         _autoFixUndo.active = false; TLNoteClick();
         if (vLanguage == 0) ResetEnglishWord(true);
         else vKeyHandleEvent(vKeyEvent::Mouse, vKeyEventState::MouseDown, 0);

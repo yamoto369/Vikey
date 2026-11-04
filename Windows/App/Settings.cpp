@@ -2,20 +2,17 @@
 // icon, wordmark, hotkey hint and the Tiếng Việt / English switch, then a grouped form), the
 // onboarding (OnboardingView.swift minus the Accessibility step), the About panel, the
 // Acknowledgements window and the typing-log window. Drawn with GDI+ so the toggles, segmented
-// control and rounded groups look like the macOS ones; text with emoji through DirectWrite.
+// control and rounded groups look like the macOS ones.
 #define _HAS_STD_BYTE 0
 #include "Settings.h"
 #include "Core.h"
 #include "Prefs.h"
 #include "KeyMap.h"
-#include "Emoji.h"
 #include "resource.h"
 #include <commctrl.h>
 #include <windowsx.h>
 #include <shellapi.h>
 #include <objidl.h>
-#include <d2d1.h>
-#include <dwrite.h>
 #define GDIPVER 0x0110
 namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
@@ -27,8 +24,6 @@ namespace Gdiplus { using std::min; using std::max; }
 #include <functional>
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "gdiplus.lib")
-#pragma comment(lib, "d2d1.lib")
-#pragma comment(lib, "dwrite.lib")
 using namespace Gdiplus;
 
 namespace vikey { namespace ui {
@@ -77,21 +72,6 @@ static void drawWordmark(HDC dc, HFONT f, int x, int y) {
     SelectObject(dc, f); SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, TEXT); TextOutW(dc, x, y, L"Vi", 2);
     SetTextColor(dc, BRAND); TextOutW(dc, x + textWidth(dc, f, L"Vi"), y, L"key", 3);
-}
-/// Text that may hold emoji: DirectWrite draws colour glyphs (GDI draws them black and white).
-static void colorText(HDC dc, const std::wstring& s, RECT r, float px, COLORREF c) {
-    static ID2D1Factory* d2d = nullptr; static IDWriteFactory* dw = nullptr; static ID2D1DCRenderTarget* rt = nullptr;
-    if (!d2d) D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d);
-    if (!dw) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&dw);
-    if (!rt && d2d) { D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96, 96); d2d->CreateDCRenderTarget(&props, &rt); }
-    if (!rt || !dw) { DrawTextW(dc, s.c_str(), -1, &r, DT_WORDBREAK | DT_NOPREFIX); return; }
-    IDWriteTextFormat* f = nullptr; dw->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, L"vi", &f);
-    if (!f) return;
-    rt->BindDC(dc, &r); rt->BeginDraw(); rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-    ID2D1SolidColorBrush* b = nullptr; rt->CreateSolidColorBrush(D2D1::ColorF(GetRValue(c) / 255.0f, GetGValue(c) / 255.0f, GetBValue(c) / 255.0f), &b);
-    if (b) { rt->DrawTextW(s.c_str(), (UINT32)s.size(), f, D2D1::RectF(0, 0, (float)(r.right - r.left), (float)(r.bottom - r.top)), b, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT); b->Release(); }
-    if (rt->EndDraw() == D2DERR_RECREATE_TARGET) { rt->Release(); rt = nullptr; }
-    f->Release();
 }
 /// The middle of the screen with the mouse (Mac 1.0.16/1.0.18 centerExactly), inside its work area.
 static void centerOnMouseScreen(HWND h) {
@@ -210,17 +190,13 @@ static LRESULT CALLBACK buttonProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 // Hotkey recorder (HotkeyRecorder.swift): a rounded gray box; click it, press a combination. The switch hotkey
-// also takes modifiers alone (Ctrl+Shift); the emoji hotkey needs a key with Ctrl, Alt or Win.
-struct Recorder { const wchar_t* pref; bool modsOnly; bool recording; int value; };
+// also takes modifiers alone (Ctrl+Shift).
+struct Recorder { const wchar_t* pref; bool recording; int value; };
 static Recorder* rec(HWND h) { return (Recorder*)GetWindowLongPtrW(h, GWLP_USERDATA); }
 static void afterHotkeyChange();
 static void commitRecorder(HWND h, int value) {
     Recorder* r = rec(h);
-    if (!r->modsOnly) {   // the emoji hotkey: a key with Ctrl/Alt/Win, and not the language switch
-        if (!(value & 0x700)) return;
-        if ((value & ~0x8000) == (currentHotkey() & ~0x8000)) return;
-        r->value = value & ~0x8000;
-    } else r->value = value | (currentHotkey() & 0x8000);
+    r->value = value | (currentHotkey() & 0x8000);
     r->recording = false; prefs::setInt(r->pref, r->value); core::reloadSettings(); InvalidateRect(h, nullptr, FALSE);
     SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(h), BN_CLICKED), (LPARAM)h);
     afterHotkeyChange();
@@ -255,7 +231,7 @@ static LRESULT CALLBACK hotkeyProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         commitRecorder(h, key | (ctrl ? 0x100 : 0) | (alt ? 0x200 : 0) | (win ? 0x400 : 0) | (shift ? 0x800 : 0));
         return 0; }
     case WM_KEYUP: case WM_SYSKEYUP: {
-        if (!r || !r->recording || !r->modsOnly) return 0;
+        if (!r || !r->recording) return 0;
         DWORD vk = (DWORD)w; if (!isModVk(vk)) return 0;
         // modifiers only: the combination that was held when the first one is released, at least two of them
         int mods = (vk == VK_LCONTROL || vk == VK_RCONTROL || vk == VK_CONTROL || GetKeyState(VK_CONTROL) < 0 ? 0x100 : 0) | (vk == VK_LMENU || vk == VK_RMENU || vk == VK_MENU || GetKeyState(VK_MENU) < 0 ? 0x200 : 0) |
@@ -294,17 +270,16 @@ static HWND makeChild(HWND parent, const wchar_t* cls, const wchar_t* text, DWOR
     HWND c = CreateWindowW(cls, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, nullptr, nullptr);
     if (f) SendMessageW(c, WM_SETFONT, (WPARAM)f, TRUE); return c;
 }
-static HWND makeRecorder(HWND parent, const wchar_t* pref, bool modsOnly, int value, int x, int y, int w, int h, int id, COLORREF bg) {
+static HWND makeRecorder(HWND parent, const wchar_t* pref, int value, int x, int y, int w, int h, int id, COLORREF bg) {
     HWND c = makeChild(parent, L"VikeyHotkey", L"", WS_TABSTOP, x, y, w, h, id); setBg(c, bg);
-    SetWindowLongPtrW(c, GWLP_USERDATA, (LONG_PTR)new Recorder{pref, modsOnly, false, value});
+    SetWindowLongPtrW(c, GWLP_USERDATA, (LONG_PTR)new Recorder{pref, false, value});
     return c;
 }
-static void startRecording(HWND c) { if (Recorder* r = rec(c)) { SetFocus(c); r->recording = true; InvalidateRect(c, nullptr, FALSE); } }
 static void destroyChildren(HWND h) { std::vector<HWND> kids; for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) kids.push_back(c); for (HWND c : kids) DestroyWindow(c); }
 
 // ---- main window -----------------------------------------------------------------------------
-enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_UPDATE, C_LOGKEYS, C_EMOJI, C_EMOJIKEY, C_FEEDBACK, C_STYLE, C_BLACKLIST,
-       L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EMOJI, O_EMOJIKEY, O_EDIT = 520 };
+enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_UPDATE, C_LOGKEYS, C_STYLE, C_BLACKLIST,
+       L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520 };
 static const UINT WM_REBUILD = WM_APP + 20;
 static HWND _win, _seg, _hint, _logWin, _logList, _logSummary, _logGrid, _aboutWin, _onbWin, _ackWin, _tooltip;
 static std::map<int, HWND> _ctl;
@@ -333,9 +308,9 @@ static HWND row(const wchar_t* label, const wchar_t* tip, const wchar_t* cls, in
     _ctl[id] = c; _y += ROW; return c;
 }
 static HWND toggleRow(const wchar_t* label, const wchar_t* tip, int id, bool on) { HWND c = row(label, tip, L"VikeyToggle", id, 40, 23); setToggle(c, on); return c; }
-static HWND recorderRow(const wchar_t* label, const wchar_t* tip, const wchar_t* pref, bool modsOnly, int value, int id) {
+static HWND recorderRow(const wchar_t* label, const wchar_t* tip, const wchar_t* pref, int value, int id) {
     rowLabel(label, tip);
-    HWND c = makeRecorder(_win, pref, modsOnly, value, W - MARGIN - 16 - 134, _y + (ROW - 28) / 2, 134, 28, id, GROUP);
+    HWND c = makeRecorder(_win, pref, value, W - MARGIN - 16 - 134, _y + (ROW - 28) / 2, 134, 28, id, GROUP);
     _ctl[id] = c; _y += ROW; return c;
 }
 
@@ -371,7 +346,7 @@ static void buildMain() {
     _y = 70;
     int hk = currentHotkey();
     beginGroup(nullptr);
-    recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", true, hk, C_HOTKEY);
+    recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", hk, C_HOTKEY);
     toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt: lên giọng khi sang tiếng Việt, xuống giọng khi sang tiếng Anh.", C_BEEP, HAS_BEEP(hk) != 0);
     endGroup();
     beginGroup(L"Tự chuyển");
@@ -392,24 +367,15 @@ static void buildMain() {
     toggleRow(L"Trả lại phím khi sai", L"Khi gõ xong một từ sai chính tả tiếng Việt, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
     endGroup();
     beginGroup(nullptr);
-    bool emojiOn = prefs::getInt(L"EmojiPicker", 0) != 0;
-    toggleRow(L"Bảng emoji", L"Bấm phím tắt để mở bảng emoji ở giữa màn hình. Tìm bằng tiếng Việt hoặc tiếng Anh, gõ Telex vẫn tìm được: \"ngựa\", \"horse\" đều ra 🐴. Enter để chèn, Esc để đóng.", C_EMOJI, emojiOn);
-    HWND emojiRec = nullptr; int emojiKey = prefs::getInt(L"EmojiHotkey", 0);
-    if (emojiOn) emojiRec = recorderRow(L"Phím mở bảng emoji", L"Một phím kèm Ctrl, Alt hoặc Win, ví dụ Ctrl+Alt+E. Bấm vào ô để đặt phím khác.", L"EmojiHotkey", false, emojiKey, C_EMOJIKEY);
-    endGroup();
-    beginGroup(nullptr);
     toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
     toggleRow(L"Tự động cập nhật", L"Mỗi ngày Vikey kiểm tra bản mới trên vikey.app, tự tải về và cài khi bạn thoát Vikey hoặc tắt máy.", C_UPDATE, prefs::getInt(L"AutoUpdate", 1) != 0);
     HWND bl = row(L"Ứng dụng không dùng bộ gõ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 120, 26, WS_TABSTOP);
     SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
-    HWND fb = row(L"Góp ý", L"Báo lỗi hoặc góp ý cho Vikey: mở trang vikey.app/feedback trong trình duyệt.", L"VikeyButton", C_FEEDBACK, 120, 26, WS_TABSTOP);
-    SetWindowTextW(fb, L"Gửi góp ý…"); setBg(fb, GROUP);
     endGroup();
     refreshEnabled();
     RECT wr = {0, 0, W, _y}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
     SetWindowPos(_win, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     RedrawWindow(_win, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);   // a rebuilt combo box kept stale pixels
-    if (emojiRec && emojiKey == 0 && GetForegroundWindow() == _win) startRecording(emojiRec);   // first time the feature is turned on here: record right away
 }
 
 static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
@@ -431,11 +397,9 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case C_MARK: if (HIWORD(wp) == CBN_SELCHANGE) { prefs::setInt(L"ModernOrthography", SendMessageW(c, CB_GETCURSEL, 0, 0) == 0 ? 1 : 0); core::reloadSettings(); } break;
         case C_SPELL: flag(L"Spelling"); break;
         case C_RESTORE: flag(L"RestoreIfInvalidWord"); break;
-        case C_EMOJI: prefs::setInt(L"EmojiPicker", toggleOn(c)); core::reloadSettings(); emoji::settingsChanged(); afterHotkeyChange(); break;
         case C_LOGIN: prefs::setLaunchAtLogin(toggleOn(c)); setToggle(c, prefs::launchAtLogin()); break;
         case C_UPDATE: prefs::setInt(L"AutoUpdate", toggleOn(c)); break;
         case C_BLACKLIST: showBlacklist(_inst); break;
-        case C_FEEDBACK: ShellExecuteW(nullptr, L"open", L"https://vikey.app/feedback?platform=windows&v=" VIKEY_VERSION_W, nullptr, nullptr, SW_SHOWNORMAL); break;
         }
         return 0; }
     case WM_REBUILD: buildMain(); return 0;
@@ -448,7 +412,6 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 void languageChanged(int lang) {
     if (_seg) { SetWindowLongPtrW(_seg, GWLP_USERDATA, lang ? 0 : 1); InvalidateRect(_seg, nullptr, FALSE); }
     if (_onbWin) InvalidateRect(_onbWin, nullptr, FALSE);
-    emoji::languageChanged(lang);
 }
 
 void showSettings(HINSTANCE inst, bool firstRun) {
@@ -518,8 +481,8 @@ void showBlacklist(HINSTANCE inst) {
     refreshBlacklistList(); centerOnMouseScreen(_blacklistWin); bringToFront(_blacklistWin);
 }
 
-// ---- onboarding (OnboardingView.swift: welcome, practice, hotkey, emoji; no Accessibility on Windows) --------
-enum OnbStep { S_WELCOME, S_PRACTICE, S_HOTKEY, S_EMOJI, S_COUNT };
+// ---- onboarding (OnboardingView.swift: welcome, practice, hotkey; no Accessibility on Windows) --------
+enum OnbStep { S_WELCOME, S_PRACTICE, S_HOTKEY, S_COUNT };
 static int _step = S_WELCOME;
 static const int OW = 540, OH = 470, OP = 28, OCW = OW - 2 * OP;
 static const struct { const wchar_t* keys; const wchar_t* result; } PRACTICE[3] = {
@@ -551,7 +514,6 @@ static void buildOnboarding() {
     destroyChildren(_onbWin);
     for (auto& e : _practiceEdit) e = nullptr;
     int y = 98;   // under the header (icon 48 + 22)
-    bool emojiOn = prefs::getInt(L"EmojiPicker", 0) != 0; int emojiKey = prefs::getInt(L"EmojiHotkey", 0);
     switch (_step) {
     case S_WELCOME: {
         _oy[0] = y; y += 28 + 14;
@@ -575,33 +537,17 @@ static void buildOnboarding() {
         _oy[0] = y; y += 28 + 14;
         std::wstring t = L"Vikey tự chuyển khi bạn gõ lẫn tiếng Anh. Khi muốn tự chuyển, bấm phím tắt này. Bấm vào ô để đổi phím.";
         _oy[1] = y; y += textHeight(fBody, t, OCW) + 14;
-        makeRecorder(_onbWin, L"SwitchKeyStatus", true, currentHotkey(), OP, y, 150, 34, O_REC, GROUP);
+        makeRecorder(_onbWin, L"SwitchKeyStatus", currentHotkey(), OP, y, 150, 34, O_REC, GROUP);
         _oy[2] = y; y += 34 + 14;
         _oy[3] = y;
         HDC dc = GetDC(_onbWin); int lw = textWidth(dc, fBody, L"Âm báo khi chuyển"); ReleaseDC(_onbWin, dc);
         HWND tg = makeChild(_onbWin, L"VikeyToggle", L"", WS_TABSTOP, OP + lw + 12, y, 40, 23, O_BEEP); setBg(tg, GROUP); setToggle(tg, HAS_BEEP(currentHotkey()) != 0);
         break; }
-    case S_EMOJI: {
-        _oy[0] = y; y += 28 + 14;
-        std::wstring t = L"Bấm một phím tắt để mở bảng emoji ở giữa màn hình. Tìm bằng tiếng Việt hay tiếng Anh đều được: \"ngựa\" hay \"horse\" đều ra 🐴.";
-        _oy[1] = y; y += textHeight(fBody, t, OCW) + 14;
-        _oy[2] = y;
-        HDC dc = GetDC(_onbWin); int lw = textWidth(dc, fBody, L"Bật bảng emoji"), lw2 = textWidth(dc, fBody, L"Phím mở bảng emoji"); ReleaseDC(_onbWin, dc);
-        HWND tg = makeChild(_onbWin, L"VikeyToggle", L"", WS_TABSTOP, OP + lw + 12, y, 40, 23, O_EMOJI); setBg(tg, GROUP); setToggle(tg, emojiOn);
-        y += 23 + 14;
-        _oy[3] = y; _oy[4] = -1;
-        if (emojiOn) {
-            HWND r = makeRecorder(_onbWin, L"EmojiHotkey", false, emojiKey, OP + lw2 + 12, y, 150, 34, O_EMOJIKEY, GROUP);
-            y += 34 + 10;
-            if (emojiKey == 0) { _oy[4] = y; if (GetForegroundWindow() == _onbWin) startRecording(r); }
-        }
-        break; }
     }
     // footer
     if (_step != S_WELCOME) onbButton(L"Quay lại", false, OP, 100, O_BACK);
-    const wchar_t* next = _step == S_WELCOME ? L"Bắt đầu" : _step == S_EMOJI ? L"Xong" : L"Tiếp tục";
+    const wchar_t* next = _step == S_WELCOME ? L"Bắt đầu" : _step == S_HOTKEY ? L"Xong" : L"Tiếp tục";
     HWND nb = onbButton(next, true, OW - OP - 110, 110, O_NEXT);
-    if (_step == S_EMOJI && emojiOn && emojiKey == 0) EnableWindow(nb, FALSE);
     InvalidateRect(_onbWin, nullptr, TRUE);
 }
 static void drawCheck(Graphics& g, float x, float y, bool ok) {
@@ -660,15 +606,6 @@ static void paintOnboarding(HWND h) {
         label(core::language() == 1 ? L"Đang gõ: Tiếng Việt" : L"Đang gõ: English", OP + 150 + 12, _oy[2], 34, SECONDARY);
         label(L"Âm báo khi chuyển", OP, _oy[3], 23);
         break; }
-    case S_EMOJI: {
-        int tw = title(L"Bảng emoji", _oy[0]);
-        label(L"không bắt buộc", OP + tw + 8, _oy[0] + 3, 26, SECONDARY, fCallout);
-        RECT pr = {OP, _oy[1], OW - OP, _oy[2] - 14};
-        colorText(mem, L"Bấm một phím tắt để mở bảng emoji ở giữa màn hình. Tìm bằng tiếng Việt hay tiếng Anh đều được: \"ngựa\" hay \"horse\" đều ra 🐴.", pr, 15, SECONDARY);
-        label(L"Bật bảng emoji", OP, _oy[2], 23);
-        if (prefs::getInt(L"EmojiPicker", 0)) label(L"Phím mở bảng emoji", OP, _oy[3], 34);
-        if (_oy[4] >= 0) label(L"Bấm một phím kèm Ctrl, Alt hoặc Win, ví dụ Ctrl+Alt+E.", OP, _oy[4], 20, SECONDARY, fCallout);
-        break; }
     }
     BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY); SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem);
     EndPaint(h, &ps);
@@ -688,11 +625,9 @@ static LRESULT CALLBACK onbProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         switch (id) {
         case O_BACK: if (_step > 0) onbGo(_step - 1); break;
-        case O_NEXT: if (_step == S_EMOJI) { prefs::setInt(L"OnboardingDone", 1); DestroyWindow(h); } else onbGo(_step + 1); break;
+        case O_NEXT: if (_step == S_HOTKEY) { prefs::setInt(L"OnboardingDone", 1); DestroyWindow(h); } else onbGo(_step + 1); break;
         case O_REC: InvalidateRect(h, nullptr, FALSE); if (_win) PostMessageW(_win, WM_REBUILD, 0, 0); break;
         case O_BEEP: { int hk = (currentHotkey() & ~0x8000) | (toggleOn(c) ? 0x8000 : 0); prefs::setInt(L"SwitchKeyStatus", hk); core::reloadSettings(); if (_win) PostMessageW(_win, WM_REBUILD, 0, 0); break; }
-        case O_EMOJI: prefs::setInt(L"EmojiPicker", toggleOn(c)); core::reloadSettings(); emoji::settingsChanged(); PostMessageW(h, WM_REBUILD, 0, 0); if (_win) PostMessageW(_win, WM_REBUILD, 0, 0); break;
-        case O_EMOJIKEY: PostMessageW(h, WM_REBUILD, 0, 0); break;
         }
         return 0; }
     case WM_REBUILD: buildOnboarding(); return 0;
@@ -715,7 +650,7 @@ void showOnboarding(HINSTANCE inst) {
     bringToFront(_onbWin);
     prefs::setInt(L"FirstRunDone", 1);
 }
-/// A hotkey or the emoji setting changed in one window: the other one shows it too.
+/// A hotkey changed in one window: the other one shows it too.
 static void afterHotkeyChange() {
     if (_win) { setHint(); PostMessageW(_win, WM_REBUILD, 0, 0); }
     if (_onbWin && _step != S_PRACTICE) PostMessageW(_onbWin, WM_REBUILD, 0, 0); else if (_onbWin) InvalidateRect(_onbWin, nullptr, FALSE);
@@ -735,8 +670,6 @@ static const Credit ACK_WORDS[] = {
     {L"MADLAD-400", L"Google", L"ODC-By 1.0", L"https://huggingface.co/datasets/allenai/MADLAD-400"},
     {L"Reddit comments", L"tensorshield/reddit_dataset_157", L"MIT", L"https://huggingface.co/datasets/tensorshield/reddit_dataset_157"},
     {L"Vietnamese forums and reader comments", L"VnExpress, Tuổi Trẻ, Tinhte, Otofun, Dạy Nhau Học", L"word statistics", L"https://vikey.app/acknowledgements"},
-    {L"Emoji names and keywords (CLDR)", L"Unicode, Inc.", L"Unicode License v3", L"https://cldr.unicode.org"},
-    {L"Emojibase", L"Miles Johnson", L"MIT", L"https://emojibase.dev"},
 };
 static const Credit ACK_TEST[] = {
     {L"ViLexNorm", L"Nguyen et al., EACL 2024", L"CC BY-NC-SA 4.0", L"https://github.com/ngxtnhi/ViLexNorm"},

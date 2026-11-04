@@ -54,7 +54,7 @@ std::wstring getString(const wchar_t* key, const std::wstring& fallback) {
     HKEY h = open(KEY_READ); if (!h) return fallback;
     DWORD size = 0, type = 0;
     std::wstring r = fallback;
-    // size first, like getBinary: a fixed 1024-character buffer gave ERROR_MORE_DATA (so the fallback) for long values (EmojiUsage)
+    // size first, like getBinary: a fixed 1024-character buffer gave ERROR_MORE_DATA (so the fallback) for long values
     if (RegQueryValueExW(h, key, nullptr, &type, nullptr, &size) == ERROR_SUCCESS && type == REG_SZ) {
         std::vector<wchar_t> buf(size / sizeof(wchar_t) + 1, 0);   // +1: a terminator even if the stored value has none
         if (RegQueryValueExW(h, key, nullptr, &type, (LPBYTE)buf.data(), &size) == ERROR_SUCCESS && type == REG_SZ) r = buf.data();
