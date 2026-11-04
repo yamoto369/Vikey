@@ -34,7 +34,7 @@ static HFONT fBody, fBodyBold, fSmall, fWordmark, fTitle, fMono, fTitle2, fCallo
 static const COLORREF BG = RGB(245, 247, 250), GROUP = RGB(255, 255, 255), BORDER = RGB(226, 232, 240), SEP = RGB(237, 241, 246);
 static const COLORREF TEXT = RGB(31, 41, 55), SECONDARY = RGB(100, 116, 139), TERTIARY = RGB(148, 163, 184), ACCENT = RGB(37, 99, 235), GREEN = RGB(22, 163, 74), TOGGLE_OFF = RGB(226, 232, 240);
 static const COLORREF BRAND = RGB(37, 99, 235);   // Fluent-inspired blue accent
-static const int W = 920, MARGIN = 24, CONTENT_X = 220, ROW = 44, GAP = 16, RADIUS = 12;
+static const int W = 920, MARGIN = 24, CONTENT_X = 220, ROW = 40, GAP = 12, RADIUS = 12;
 static ULONG_PTR gdipToken = 0;
 static HINSTANCE _inst;
 static void initLook() {
@@ -126,7 +126,7 @@ static LRESULT CALLBACK toggleProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
         Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
         bool on = GetWindowLongPtrW(h, GWLP_USERDATA) != 0, enabled = IsWindowEnabled(h);
-        Color fill = on ? gp(ACCENT, enabled ? 255 : 110) : gp(TOGGLE_OFF);   // macOS toggles use the accent colour
+        Color fill = on ? gp(ACCENT, enabled ? 255 : 110) : gp(TOGGLE_OFF);
         roundRect(g, RectF(0.5f, 0.5f, 39, 22), 11, fill, Color(0, 0, 0, 0));
         SolidBrush knob(Color(255, 255, 255, 255)); float kx = on ? 19.5f : 2.5f;
         SolidBrush shadow(Color(40, 0, 0, 0)); g.FillEllipse(&shadow, kx, 3.0f, 18.0f, 18.0f);
@@ -171,7 +171,7 @@ static LRESULT CALLBACK segProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
-// Push button, macOS style: "prominent" (accent fill, white text) or plain (light gray). GWLP_USERDATA = prominent.
+// Fluent button: GWLP_USERDATA = prominent/selected. Supports hover, pressed and keyboard focus.
 static LRESULT CALLBACK buttonProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_PAINT: {
@@ -179,23 +179,52 @@ static LRESULT CALLBACK buttonProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom); HGDIOBJ old = SelectObject(mem, bmp);
         HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
         Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
-        bool prominent = GetWindowLongPtrW(h, GWLP_USERDATA) != 0, enabled = IsWindowEnabled(h), down = GetPropW(h, L"vkdown") != nullptr;
-        Color fill = prominent ? gp(ACCENT, enabled ? (down ? 210 : 255) : 90) : gp(down ? RGB(218, 218, 222) : RGB(232, 232, 236));
-        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 7, fill, prominent ? Color(0, 0, 0, 0) : gp(RGB(214, 214, 218)));
-        wchar_t t[64]; GetWindowTextW(h, t, 64);
-        SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, prominent ? RGB(255, 255, 255) : (enabled ? TEXT : TERTIARY));
-        DrawTextW(mem, t, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY); SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0; }
-    case WM_LBUTTONDOWN: SetPropW(h, L"vkdown", (HANDLE)1); SetCapture(h); InvalidateRect(h, nullptr, FALSE); return 0;
+        bool selected = GetWindowLongPtrW(h, GWLP_USERDATA) != 0, enabled = IsWindowEnabled(h);
+        bool down = GetPropW(h, L"vkdown") != nullptr, hover = GetPropW(h, L"vkhover") != nullptr;
+        bool focused = GetFocus() == h;
+        Color fill = selected ? gp(ACCENT, enabled ? (down ? 220 : 255) : 100) :
+            gp(down ? RGB(218, 226, 240) : (hover ? RGB(239, 243, 250) : RGB(243, 245, 249)));
+        Color border = selected ? Color(0, 0, 0, 0) : gp(hover ? RGB(190, 204, 225) : BORDER);
+        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 8, fill, border);
+        if (focused) {
+            Pen focus(gp(ACCENT, 210), 1.4f);
+            g.DrawRectangle(&focus, 2.0f, 2.0f, (float)rc.right - 5.0f, (float)rc.bottom - 5.0f);
+        }
+        wchar_t t[96] = {}; GetWindowTextW(h, t, 96);
+        SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT);
+        SetTextColor(mem, selected ? RGB(255, 255, 255) : (enabled ? TEXT : TERTIARY));
+        RECT tr = rc; InflateRect(&tr, -8, 0);
+        DrawTextW(mem, t, -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0; }
+    case WM_MOUSEMOVE: {
+        if (!GetPropW(h, L"vkhover")) {
+            SetPropW(h, L"vkhover", (HANDLE)1);
+            TRACKMOUSEEVENT tme = {sizeof(tme), TME_LEAVE, h, 0}; TrackMouseEvent(&tme);
+            InvalidateRect(h, nullptr, FALSE);
+        }
+        break; }
+    case WM_MOUSELEAVE: RemovePropW(h, L"vkhover"); InvalidateRect(h, nullptr, FALSE); return 0;
+    case WM_LBUTTONDOWN:
+        if (IsWindowEnabled(h)) { SetPropW(h, L"vkdown", (HANDLE)1); SetCapture(h); InvalidateRect(h, nullptr, FALSE); }
+        return 0;
     case WM_LBUTTONUP: {
-        bool was = GetPropW(h, L"vkdown") != nullptr; RemovePropW(h, L"vkdown"); ReleaseCapture(); InvalidateRect(h, nullptr, FALSE);
+        bool was = GetPropW(h, L"vkdown") != nullptr; RemovePropW(h, L"vkdown");
+        if (GetCapture() == h) ReleaseCapture();
+        InvalidateRect(h, nullptr, FALSE);
         RECT rc; GetClientRect(h, &rc); POINT p = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
         if (was && PtInRect(&rc, p) && IsWindowEnabled(h)) SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(h), BN_CLICKED), (LPARAM)h);
         return 0; }
-    case WM_ENABLE: InvalidateRect(h, nullptr, FALSE); break;
+    case WM_KEYUP:
+        if ((w == VK_SPACE || w == VK_RETURN) && IsWindowEnabled(h))
+            SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(h), BN_CLICKED), (LPARAM)h);
+        return 0;
+    case WM_SETFOCUS: case WM_KILLFOCUS: case WM_ENABLE:
+        InvalidateRect(h, nullptr, FALSE); break;
     case WM_ERASEBKGND: return 1;
-    case WM_SETCURSOR: SetCursor(LoadCursor(nullptr, IDC_ARROW)); return TRUE;
-    case WM_NCDESTROY: RemovePropW(h, L"vkbg"); RemovePropW(h, L"vkdown"); break;
+    case WM_SETCURSOR: SetCursor(LoadCursor(nullptr, IsWindowEnabled(h) ? IDC_HAND : IDC_ARROW)); return TRUE;
+    case WM_NCDESTROY:
+        RemovePropW(h, L"vkbg"); RemovePropW(h, L"vkdown"); RemovePropW(h, L"vkhover"); break;
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -310,7 +339,7 @@ static void beginGroup(const wchar_t* title) { if (title) { _titles.push_back({_
 static void endGroup() { _groups.push_back({_groupTop, _y}); _y += GAP; }
 static void rowLabel(const wchar_t* label, const wchar_t* tip) {
     if (_y != _groupTop) _seps.push_back(_y);
-    int ly = _y + (ROW - 22) / 2;
+    int ly = _y + (ROW - 24) / 2;
     child(L"STATIC", label, SS_LEFT | SS_NOPREFIX, CONTENT_X + 18, ly, 360, 24, 0, fBody);
     HDC dc = GetDC(_win); int lw = textWidth(dc, fBody, label); ReleaseDC(_win, dc);
     if (tip) { HWND t = child(L"VikeyTip", tip, 0, CONTENT_X + 18 + lw + 8, ly + 4, 16, 16, 0); addTip(t, tip); }
@@ -351,11 +380,11 @@ static void paintMain(HWND h) {
     RECT navCaption = {24, 68, 180, 92}; DrawTextW(dc, L"CÀI ĐẶT", -1, &navCaption, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, fTitle2); SetTextColor(dc, TEXT);
     const wchar_t* pageTitle = _settingsPage == 0 ? L"Tổng quan" : (_settingsPage == 1 ? L"Gõ tiếng Việt" : L"Nâng cao");
-    RECT titleRect = {CONTENT_X + 18, 22, W - MARGIN, 54}; DrawTextW(dc, pageTitle, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT titleRect = {CONTENT_X + 18, 22, W - MARGIN - 290, 54}; DrawTextW(dc, pageTitle, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
     const wchar_t* subtitle = _settingsPage == 0 ? L"Thiết lập cách chuyển đổi và hành vi nhập liệu." :
         (_settingsPage == 1 ? L"Tùy chỉnh kiểu gõ và quy tắc tiếng Việt." : L"Quản lý ghi nhớ, khởi động và ứng dụng ngoại lệ.");
-    RECT subRect = {CONTENT_X + 19, 54, W - MARGIN, 76}; DrawTextW(dc, subtitle, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT subRect = {CONTENT_X + 19, 54, W - MARGIN - 220, 76}; DrawTextW(dc, subtitle, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     EndPaint(h, &ps);
 }
 
@@ -375,9 +404,9 @@ static void buildMain() {
     nav(L"Nâng cao", C_NAV_ADVANCED, 2, 200);
 
     _hint = child(L"STATIC", L"", SS_LEFT, 0, 0, 1, 1, 0, fSmall);
-    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164, 24, 164, 32, C_SEG);
+    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164 - 112, 24, 164, 32, C_SEG);
     languageChanged(core::language());
-    _y = 104;
+    _y = 92;
     if (_settingsPage == 0) {
         beginGroup(L"Chuyển đổi");
         recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", currentHotkey(), C_HOTKEY);
