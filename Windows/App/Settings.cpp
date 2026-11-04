@@ -418,7 +418,7 @@ static void buildMain() {
         endGroup();
     } else if (_settingsPage == 1) {
         beginGroup(L"Kiểu gõ");
-        HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"COMBOBOX", C_STYLE, 210, 240, CBS_DROPDOWNLIST | WS_TABSTOP);
+        HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"COMBOBOX", C_STYLE, 210, 240, CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP);
         for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
         SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
         SetWindowPos(style, nullptr, W - MARGIN - 18 - 210, _y - ROW + 6, 210, 240, SWP_NOZORDER);
@@ -452,6 +452,45 @@ static void buildMain() {
 static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: paintMain(h); return 0;
+    case WM_MEASUREITEM: {
+        MEASUREITEMSTRUCT* mi = (MEASUREITEMSTRUCT*)lp;
+        if (mi->CtlType == ODT_COMBOBOX && (mi->CtlID == C_STYLE || mi->CtlID == C_MARK)) {
+            mi->itemHeight = 30; return TRUE;
+        }
+        break;
+    }
+    case WM_DRAWITEM: {
+        DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
+        if (di->CtlType == ODT_COMBOBOX && (di->CtlID == C_STYLE || di->CtlID == C_MARK)) {
+            RECT r = di->rcItem;
+            bool selected = (di->itemState & ODS_SELECTED) != 0;
+            bool focused = (di->itemState & ODS_FOCUS) != 0;
+            HBRUSH bg = CreateSolidBrush((di->itemState & ODS_COMBOBOXEDIT) ? GROUP : (selected ? RGB(239, 244, 255) : GROUP));
+            FillRect(di->hDC, &r, bg); DeleteObject(bg);
+            if (di->itemID != (UINT)-1) {
+                wchar_t label[128] = {};
+                SendMessageW(di->hwndItem, CB_GETLBTEXT, di->itemID, (LPARAM)label);
+                SetBkMode(di->hDC, TRANSPARENT);
+                SetTextColor(di->hDC, TEXT);
+                SelectObject(di->hDC, fBody);
+                RECT tr = r; tr.left += 12; tr.right -= 28;
+                DrawTextW(di->hDC, label, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+            if (di->itemState & ODS_COMBOBOXEDIT) {
+                int cx = r.right - 18, cy = (r.top + r.bottom) / 2;
+                POINT pts[3] = {{cx - 4, cy - 2}, {cx + 4, cy - 2}, {cx, cy + 2}};
+                HBRUSH arrow = CreateSolidBrush(SECONDARY);
+                HPEN pen = CreatePen(PS_SOLID, 1, SECONDARY);
+                HGDIOBJ oldBrush = SelectObject(di->hDC, arrow), oldPen = SelectObject(di->hDC, pen);
+                Polygon(di->hDC, pts, 3);
+                SelectObject(di->hDC, oldBrush); SelectObject(di->hDC, oldPen);
+                DeleteObject(arrow); DeleteObject(pen);
+            }
+            if (focused) DrawFocusRect(di->hDC, &r);
+            return TRUE;
+        }
+        break;
+    }
     case WM_CTLCOLORSTATIC: { static HBRUSH bgBrush = CreateSolidBrush(BG), groupBrush = CreateSolidBrush(GROUP); SetBkMode((HDC)wp, TRANSPARENT); HWND c = (HWND)lp; SetTextColor((HDC)wp, c == _hint ? SECONDARY : TEXT); return (LRESULT)(c == _hint ? bgBrush : groupBrush); }
     case WM_COMMAND: {
         int id = LOWORD(wp); HWND c = (HWND)lp;
