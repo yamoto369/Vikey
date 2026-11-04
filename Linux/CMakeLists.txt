@@ -44,6 +44,8 @@ vikey_tool(drvlazy   ${AS}/driver/drvlazy.cpp    ${AS}/driver vikey_engine)
 vikey_tool(bench     ${AS}/driver/bench.cpp      ${AS}/driver vikey_engine)
 vikey_tool(undo_test ${AS}/driver/undo_test.cpp  ${AS}/driver vikey_engine)
 vikey_tool(touchsim  ${AS}/touch/touchsim.cpp    ${AS}/touch  vikey_engine)
+add_executable(surrounding_test Tests/surrounding_test.cpp)   # the IBus engine's delete limit (#32), no IBus needed
+target_include_directories(surrounding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ibus)
 
 option(VIKEY_IBUS "Build the IBus engine (needs libibus-1.0 + gtk4/libadwaita)" ON)
 if(VIKEY_IBUS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ibus/CMakeLists.txt)

@@ -7,6 +7,7 @@ enum Migration {
         Preferences.register()
         let defaults = UserDefaults.standard
         telexStyleFromOpenKeyIfNeeded()
+        clearInvalidEmojiHotkey()
         guard !defaults.bool(forKey: "MigratedFromOpenKey") else { return }
         defaults.set(true, forKey: "MigratedFromOpenKey")
         guard let old = UserDefaults(suiteName: "com.tuyenmai.openkey") else { return }
@@ -27,6 +28,15 @@ enum Migration {
                 try? fm.copyItem(at: from, to: to)
             }
         }
+    }
+
+    /// An emoji hotkey saved before the recorder's rules (no ⌃/⌥/⌘, e.g. ⇧E, or the switch hotkey's keys) would eat
+    /// typing or the switch: cleared, so the settings ask for a new one.
+    private static func clearInvalidEmojiHotkey() {
+        let defaults = UserDefaults.standard
+        let k = defaults.integer(forKey: PrefEmoji.hotkey)
+        guard k != 0, k & 0x700 == 0 || Hotkey.sameKeys(k, defaults.integer(forKey: PrefKey.hotkey)) else { return }
+        defaults.set(0, forKey: PrefEmoji.hotkey)
     }
 
     /// OpenKey's input type 2 / 3 were Simple Telex 1 / 2 (D56; VNI, 1, isn't in Vikey). Its own one-time step, so people

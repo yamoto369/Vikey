@@ -1186,6 +1186,8 @@ extern "C" {
         if (type == kCGEventKeyDown && vEmojiHotkey && !_frontExcluded && GET_SWITCH_KEY(vEmojiHotkey) == _keycode &&
             HAS_CONTROL(vEmojiHotkey) == GET_BOOL(_flag & kCGEventFlagMaskControl) && HAS_OPTION(vEmojiHotkey) == GET_BOOL(_flag & kCGEventFlagMaskAlternate) &&
             HAS_COMMAND(vEmojiHotkey) == GET_BOOL(_flag & kCGEventFlagMaskCommand) && HAS_SHIFT(vEmojiHotkey) == GET_BOOL(_flag & kCGEventFlagMaskShift)) {
+            _lastFlag = 0; if (_flag & MODIFIER_FLAGS) _modifierChordUsed = true;   // ⌃⇧E: releasing ⌃⇧ afterwards isn't the ⌃⇧ switch hotkey
+            if (CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat)) return NULL;   // held: open or close once per press
             if (vEmojiHandler) dispatch_async(dispatch_get_main_queue(), vEmojiHandler);
             return NULL;
         }

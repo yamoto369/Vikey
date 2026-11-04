@@ -104,7 +104,10 @@ struct MainView: View {
 
     @ViewBuilder private var hotkeyRows: some View {
                 LabeledContent {
-                    HotkeyRecorder(raw: Binding(get: { hotkeyRaw }, set: { hotkeyRaw = $0; Preferences.apply() }))
+                    HotkeyRecorder(raw: Binding(get: { hotkeyRaw }, set: { k in
+                        guard emojiOn == 0 || !Hotkey.sameKeys(k, emojiKey) else { return }   // already the emoji picker's (only while it's on)
+                        hotkeyRaw = k; Preferences.apply()
+                    }))
                 } label: {
                     Tip("Phím chuyển Anh/Việt", "Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.")
                 }
@@ -156,13 +159,16 @@ struct MainView: View {
                 }
     }
     @ViewBuilder private var emojiRows: some View {
-                Toggle(isOn: Binding(get: { emojiOn != 0 }, set: { emojiOn = $0 ? 1 : 0; Preferences.apply() })) {
+                Toggle(isOn: Binding(get: { emojiOn != 0 }, set: { on in
+                    if on && Hotkey.sameKeys(emojiKey, hotkeyRaw) { emojiKey = 0 }   // a collision left from before: record it again
+                    emojiOn = on ? 1 : 0; Preferences.apply()
+                })) {
                     Tip("Bảng emoji", "Bấm phím tắt để mở bảng emoji ở giữa màn hình. Tìm bằng tiếng Việt hoặc tiếng Anh, gõ Telex vẫn tìm được: \"ngựa\", \"horse\" đều ra 🐴. Enter để chèn, Esc để đóng.")
                 }
                 if emojiOn != 0 {
                     LabeledContent {
                         HotkeyRecorder(raw: Binding(get: { emojiKey }, set: { k in
-                            guard k != hotkeyRaw & ~0x8000 else { return }   // already the Vietnamese/English switch
+                            guard !Hotkey.sameKeys(k, hotkeyRaw) else { return }   // already the Vietnamese/English switch
                             emojiKey = k & ~0x8000; Preferences.apply()
                         }), allowModifiersOnly: false, autoStart: emojiKey == 0)
                     } label: {
