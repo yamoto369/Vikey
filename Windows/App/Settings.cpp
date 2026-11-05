@@ -246,6 +246,7 @@ static void chooseComboItem(HWND combo, int index) {
     InvalidateRect(combo, nullptr, FALSE);
     HWND parent = GetParent(combo);
     closeComboPopup();
+    if (IsWindow(combo)) SetFocus(combo);
     SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(combo), CBN_SELCHANGE), (LPARAM)combo);
 }
 static LRESULT CALLBACK comboPopupProc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -527,6 +528,7 @@ static void paintMain(HWND h) {
 }
 
 static void buildMain() {
+    closeComboPopup();
     destroyChildren(_win);
     if (_tooltip) { DestroyWindow(_tooltip); _tooltip = nullptr; }
     _groups.clear(); _titles.clear(); _seps.clear(); _ctl.clear();
