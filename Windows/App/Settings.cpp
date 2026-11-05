@@ -117,6 +117,20 @@ static const Link* linkAt(const std::vector<Link>& links, LPARAM lp) { POINT p =
 static COLORREF bgOf(HWND h) { UINT_PTR v = (UINT_PTR)GetPropW(h, L"vkbg"); return v ? (COLORREF)(v - 1) : GROUP; }
 static void setBg(HWND h, COLORREF c) { SetPropW(h, L"vkbg", (HANDLE)(UINT_PTR)(c + 1)); }
 
+// Shared Fluent treatment for report-style lists used by the blacklist and typing log.
+static void applyFluentListView(HWND list, bool fullRowSelect = true) {
+    if (!list) return;
+    DWORD styles = LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP;
+    if (fullRowSelect) styles |= LVS_EX_FULLROWSELECT;
+    ListView_SetExtendedListViewStyleEx(list, styles, styles);
+    ListView_SetBkColor(list, GROUP);
+    ListView_SetTextBkColor(list, GROUP);
+    ListView_SetTextColor(list, TEXT);
+    SendMessageW(list, WM_SETFONT, (WPARAM)fBody, TRUE);
+    HWND header = ListView_GetHeader(list);
+    if (header) SendMessageW(header, WM_SETFONT, (WPARAM)fBodyBold, TRUE);
+}
+
 // Toggle switch: GWLP_USERDATA = on/off; BN_CLICKED to the parent on change; disabled = grayed.
 static LRESULT CALLBACK toggleProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
@@ -1173,7 +1187,7 @@ void showTypingLog(HINSTANCE inst) {
     HWND old = _win; _win = _logWin;
     _logSummary = child(L"STATIC", L"", SS_LEFT, 20, 20, 700, 24, 0, fTitle);
     _logGrid = child(WC_LISTVIEWW, L"", LVS_REPORT | LVS_NOSORTHEADER | LVS_SINGLESEL | LVS_NOCOLUMNHEADER * 0, 20, 52, 720, 252, 0, fBody);
-    ListView_SetExtendedListViewStyle(_logGrid, LVS_EX_FULLROWSELECT);
+    applyFluentListView(_logGrid);
     const wchar_t* heads[] = {L"", L"Hôm nay", L"7 ngày", L"Tất cả"}; int widths[] = {330, 120, 120, 120};
     for (int i = 0; i < 4; i++) { LVCOLUMNW c = {}; c.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT; c.pszText = (LPWSTR)heads[i]; c.cx = widths[i]; c.fmt = i ? LVCFMT_RIGHT : LVCFMT_LEFT; ListView_InsertColumn(_logGrid, i, &c); }
     HWND tg = child(L"VikeyToggle", L"", 0, 20, 314, 40, 23, C_LOGKEYS); setToggle(tg, prefs::getInt(L"TypingLogKeys", 1) != 0);
@@ -1181,7 +1195,7 @@ void showTypingLog(HINSTANCE inst) {
     child(L"STATIC", L"Không bao giờ ghi trong ô mật khẩu, trình quản lý mật khẩu và Terminal.", SS_LEFT, 68, 338, 600, 18, 1, fSmall);
     child(L"STATIC", L"Sự kiện gần đây", SS_LEFT, 20, 366, 300, 20, 0, fBodyBold);
     _logList = child(WC_LISTVIEWW, L"", LVS_REPORT | LVS_NOSORTHEADER | LVS_SINGLESEL, 20, 390, 720, 150, 0, fBody);
-    ListView_SetExtendedListViewStyle(_logList, LVS_EX_FULLROWSELECT);
+    applyFluentListView(_logList);
     const wchar_t* eh[] = {L"Thời gian", L"Ứng dụng / trang", L"Sự kiện", L"Chi tiết"}; int ew[] = {110, 160, 140, 290};
     for (int i = 0; i < 4; i++) { LVCOLUMNW c = {}; c.mask = LVCF_TEXT | LVCF_WIDTH; c.pszText = (LPWSTR)eh[i]; c.cx = ew[i]; ListView_InsertColumn(_logList, i, &c); }
     child(L"BUTTON", L"Làm mới", 0, 20, 556, 90, 28, L_REFRESH, fBody); child(L"BUTTON", L"Mở file log", 0, 118, 556, 100, 28, L_OPEN, fBody); child(L"BUTTON", L"Xoá log…", 0, 640, 556, 100, 28, L_CLEAR, fBody);
