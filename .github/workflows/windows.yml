@@ -103,10 +103,10 @@ jobs:
           "SSIGN=$exe" >> $env:GITHUB_ENV
         shell: pwsh
 
-      - name: Prepare portable executables
+      - name: Prepare portable ZIP
         run: |
           $ver = (Select-String -Path project.yml -Pattern 'MARKETING_VERSION: "([^"]+)"').Matches[0].Groups[1].Value
-          New-Item -ItemType Directory -Force dist | Out-Null
+          New-Item -ItemType Directory -Force dist, portable | Out-Null
 
           function Sign($file) {
             if (-not $env:SSIGN) {
@@ -127,10 +127,12 @@ jobs:
             }
 
             Sign $src
-            Copy-Item $src "dist/Vikey-$ver-$arch-portable.exe"
+            Copy-Item $src "portable/Vikey-$arch.exe"
           }
 
-          Get-ChildItem dist -File | Select-Object Name, Length | Format-Table -AutoSize
+          $zip = "dist/Vikey-$ver.zip"
+          Compress-Archive -Path "portable/Vikey-x64.exe", "portable/Vikey-arm64.exe" -DestinationPath $zip -Force
+          Get-Item $zip | Select-Object Name, Length | Format-Table -AutoSize
         shell: pwsh
 
       - name: Upload build artifacts
