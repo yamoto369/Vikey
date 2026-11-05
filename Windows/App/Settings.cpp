@@ -549,6 +549,34 @@ static void paintMain(HWND h) {
     EndPaint(h, &ps);
 }
 
+// Settings layout metadata is the single source for group structure and sizing.
+struct GroupLayout { const wchar_t* title; int itemCount; };
+struct PageLayout { const GroupLayout* groups; size_t groupCount; };
+static constexpr GroupLayout GENERAL_GROUPS[] = {
+    {L"Chuyển đổi", 2}, {L"Tự động", 2},
+};
+static constexpr GroupLayout TYPING_GROUPS[] = {
+    {L"Kiểu gõ", 2}, {L"Kiểm tra", 2},
+};
+static constexpr GroupLayout ADVANCED_GROUPS[] = {
+    {L"Ghi nhớ", 2}, {L"Hệ thống", 3},
+};
+static constexpr PageLayout SETTINGS_PAGES[] = {
+    {GENERAL_GROUPS, std::size(GENERAL_GROUPS)},
+    {TYPING_GROUPS, std::size(TYPING_GROUPS)},
+    {ADVANCED_GROUPS, std::size(ADVANCED_GROUPS)},
+};
+
+static int settingsPageContentBottom(const PageLayout& page) {
+    int y = 92;
+    for (size_t i = 0; i < page.groupCount; ++i)
+        y += 28 + page.groups[i].itemCount * ROW + GAP;
+    return y;
+}
+static const GroupLayout& settingsGroup(int page, size_t group) {
+    return SETTINGS_PAGES[page].groups[group];
+}
+
 static void buildMain() {
     closeComboPopup();
     destroyChildren(_win);
@@ -570,16 +598,16 @@ static void buildMain() {
     languageChanged(core::language());
     _y = 92;
     if (_settingsPage == 0) {
-        beginGroup(L"Chuyển đổi");
+        beginGroup(settingsGroup(0, 0).title);
         recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", currentHotkey(), C_HOTKEY);
         toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt.", C_BEEP, HAS_BEEP(currentHotkey()) != 0);
         endGroup();
-        beginGroup(L"Tự động");
+        beginGroup(settingsGroup(0, 1).title);
         toggleRow(L"Tự chuyển Anh/Việt", L"Tự nhận biết và chuyển chế độ khi bạn bắt đầu gõ ngôn ngữ còn lại.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
         toggleRow(L"Tạm dừng 5 giây", L"Khi bạn tự bấm chuyển Anh/Việt, Vikey tạm dừng tự chuyển trong 5 giây.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
         endGroup();
     } else if (_settingsPage == 1) {
-        beginGroup(L"Kiểu gõ");
+        beginGroup(settingsGroup(1, 0).title);
         HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"VikeyCombo", C_STYLE, 210, 36, WS_TABSTOP);
         for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
         SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
@@ -589,16 +617,16 @@ static void buildMain() {
         SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
         SetWindowPos(mark, nullptr, W - MARGIN - 18 - 180, _y - ROW + 2, 180, 36, SWP_NOZORDER);
         endGroup();
-        beginGroup(L"Kiểm tra");
+        beginGroup(settingsGroup(1, 1).title);
         toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
         toggleRow(L"Trả lại phím khi sai", L"Khi từ sai chính tả, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
         endGroup();
     } else {
-        beginGroup(L"Ghi nhớ");
+        beginGroup(settingsGroup(2, 0).title);
         toggleRow(L"Nhớ theo ứng dụng", L"Nhớ chế độ tiếng Anh hoặc tiếng Việt riêng cho từng ứng dụng.", C_SMART, prefs::getInt(L"UseSmartSwitchKey", 1) != 0);
         toggleRow(L"Nhớ theo trang web", L"Nhớ chế độ nhập liệu cho từng trang web trong trình duyệt được hỗ trợ.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
         endGroup();
-        beginGroup(L"Hệ thống");
+        beginGroup(settingsGroup(2, 1).title);
         toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
         toggleRow(L"Tự động cập nhật", L"Kiểm tra và cài đặt phiên bản mới khi có bản cập nhật.", C_UPDATE, prefs::getInt(L"AutoUpdate", 1) != 0);
         HWND bl = row(L"Ứng dụng ngoại lệ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 132, 32, WS_TABSTOP);
@@ -606,7 +634,18 @@ static void buildMain() {
         endGroup();
     }
     refreshEnabled();
-    RECT wr = {0, 0, W, 620};
+    // Keep one stable window height based on the tallest settings page.
+    // _y is the active page's actual extent; the helper measures the other pages
+    // with the same row/group metrics so adding rows updates the required height.
+    const int minClientHeight = 260;
+    const int bottomPadding = 24;
+    const int tallestPageBottom = std::max({
+        settingsPageContentBottom(SETTINGS_PAGES[0]),
+        settingsPageContentBottom(SETTINGS_PAGES[1]),
+        settingsPageContentBottom(SETTINGS_PAGES[2])
+    });
+    const int clientHeight = std::max(minClientHeight, tallestPageBottom + bottomPadding);
+    RECT wr = {0, 0, W, clientHeight};
     AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
     SetWindowPos(_win, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     RedrawWindow(_win, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
