@@ -7,7 +7,6 @@
 #include "Prefs.h"
 #include "Site.h"
 #include "Settings.h"
-#include "Updater.h"
 #include "CrashReporter.h"
 #include "../../Engine/Vietnamese.h"
 #include "resource.h"
@@ -21,7 +20,7 @@ static const UINT WM_TRAY = WM_APP + 1;
 static const UINT WM_VIKEY_SETLANG = WM_APP + 2;   // tests: wParam = language (0 English, 1 Vietnamese)
 static const UINT WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");   // Explorer (re)started: the tray is empty
 static const UINT TIMER_FLUSH = 1;
-enum { ID_VIET = 100, ID_ENG, ID_SETTINGS, ID_AUTOSWITCH, ID_UPDATE, ID_LOGTOGGLE, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
+enum { ID_VIET = 100, ID_ENG, ID_SETTINGS, ID_AUTOSWITCH, ID_LOGTOGGLE, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
 
 static HWND _hwnd; static NOTIFYICONDATAW _nid = {};
 static HICON _iconV, _iconE;
@@ -74,7 +73,6 @@ static void showMenu() {
     AppendMenuW(m, MF_STRING, ID_SETTINGS, L"Mở Vikey…");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_GUIDE, L"Hướng dẫn…");
-    AppendMenuW(m, MF_STRING, ID_UPDATE, L"Kiểm tra cập nhật…");
     AppendMenuW(m, MF_STRING, ID_ABOUT, L"Giới thiệu Vikey");
     HMENU dbg = CreatePopupMenu();
     AppendMenuW(dbg, MF_STRING | (prefs::getInt(L"TypingLogEnabled", 0) ? MF_CHECKED : 0), ID_LOGTOGGLE, L"Ghi nhật ký gõ");
@@ -99,16 +97,14 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case ID_VIET: core::setLanguageByUser(!core::language()); break;
         case ID_AUTOSWITCH: toggle(L"AutoSwitchByTyping", 1); break;
         case ID_SETTINGS: ui::showSettings(GetModuleHandleW(nullptr), false); break;
-        case ID_UPDATE: updater::checkNow(h); break;
         case ID_ABOUT: ui::showAbout(GetModuleHandleW(nullptr)); break;
         case ID_GUIDE: ui::showOnboarding(GetModuleHandleW(nullptr)); break;
         case ID_LOGTOGGLE: toggle(L"TypingLogEnabled", 0); break;
         case ID_LOG: ui::showTypingLog(GetModuleHandleW(nullptr)); break;
-        case ID_QUIT: updater::installPendingAndQuit(); DestroyWindow(h); break;
+        case ID_QUIT: DestroyWindow(h); break;
         }
         return 0;
     case WM_APP + 3: ui::showSettings(GetModuleHandleW(nullptr), false); return 0;
-    case updater::WM_UPDATER: updater::onEvent(wp); return 0;
     case WM_VIKEY_SETLANG: core::setLanguageQuiet((int)wp); return 1;
     case WM_TIMER: if (wp == TIMER_FLUSH) core::flushTypingLog(); return 0;
     case site::WM_SITE: { HWND w; std::wstring host = site::lastHost(&w); if (w == GetForegroundWindow()) core::onSiteChanged(host); return 0; }
@@ -130,8 +126,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 0;
     }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    if (vikey::updater::installPendingAtLaunch()) return 0;   // an update downloaded earlier installs now and relaunches Vikey
     vikey::prefs::migrateFromOpenKey();
+    // Remove obsolete network-feature state from older installations.
+    std::wstring oldUpdate = vikey::prefs::getString(L"PendingUpdatePath", L"");
+    if (!oldUpdate.empty()) DeleteFileW(oldUpdate.c_str());
+    for (const wchar_t* k : {L"AutoUpdate", L"LastUpdateCheck", L"AppcastURL", L"PendingUpdatePath", L"PendingUpdateVersion", L"CrashReportsAuto", L"CrashReportsSeenUntil", L"crashEndpoint"}) vikey::prefs::remove(k);
     // Removed features: drop their stored prefs, so a stale picker setting cannot come back.
     for (const wchar_t* k : {L"EmojiPicker", L"EmojiHotkey", L"EmojiSkinTone", L"EmojiUsage"}) vikey::prefs::remove(k);
     WNDCLASSW wc = {}; wc.lpfnWndProc = wndProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyTray";
@@ -148,8 +147,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     updateTray(vikey::core::language());
     if (!vikey::prefs::has(L"FirstRunDone")) vikey::ui::showSettings(inst, true);
     SetTimer(_hwnd, TIMER_FLUSH, 10000, nullptr);
-    vikey::updater::start(_hwnd);
-    vikey::crash::checkAtLaunch();   // after a crash: ask to send the report (on its own thread)
     vikey::site::start(_hwnd);   // per-website memory and password fields, read off the hook thread
     MSG msg; while (GetMessageW(&msg, nullptr, 0, 0)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     ReleaseMutex(single); CloseHandle(single);
