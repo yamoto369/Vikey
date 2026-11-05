@@ -34,7 +34,7 @@ static HFONT fBody, fBodyBold, fSmall, fWordmark, fTitle, fMono, fTitle2, fCallo
 static const COLORREF BG = RGB(245, 247, 250), GROUP = RGB(255, 255, 255), BORDER = RGB(226, 232, 240), SEP = RGB(237, 241, 246);
 static const COLORREF TEXT = RGB(31, 41, 55), SECONDARY = RGB(100, 116, 139), TERTIARY = RGB(148, 163, 184), ACCENT = RGB(37, 99, 235), GREEN = RGB(22, 163, 74), TOGGLE_OFF = RGB(226, 232, 240);
 static const COLORREF BRAND = RGB(37, 99, 235);   // Fluent-inspired blue accent
-static const int W = 920, MARGIN = 24, CONTENT_X = 220, ROW = 40, GAP = 12, RADIUS = 12;
+static const int W = 720, MARGIN = 24, CONTENT_X = 220, ROW = 40, GAP = 12, RADIUS = 12;
 static ULONG_PTR gdipToken = 0;
 static HINSTANCE _inst;
 static void initLook() {
@@ -541,11 +541,11 @@ static void paintMain(HWND h) {
     RECT navCaption = {24, 68, 180, 92}; DrawTextW(dc, L"CÀI ĐẶT", -1, &navCaption, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, fTitle2); SetTextColor(dc, TEXT);
     const wchar_t* pageTitle = _settingsPage == 0 ? L"Tổng quan" : (_settingsPage == 1 ? L"Gõ tiếng Việt" : L"Nâng cao");
-    RECT titleRect = {CONTENT_X + 18, 22, W - MARGIN - 290, 54}; DrawTextW(dc, pageTitle, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT titleRect = {CONTENT_X + 18, 22, W - MARGIN - 18 - 164 - 16, 54}; DrawTextW(dc, pageTitle, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
     const wchar_t* subtitle = _settingsPage == 0 ? L"Thiết lập cách chuyển đổi và hành vi nhập liệu." :
         (_settingsPage == 1 ? L"Tùy chỉnh kiểu gõ và quy tắc tiếng Việt." : L"Quản lý ghi nhớ, khởi động và ứng dụng ngoại lệ.");
-    RECT subRect = {CONTENT_X + 19, 54, W - MARGIN - 220, 76}; DrawTextW(dc, subtitle, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT subRect = {CONTENT_X + 19, 54, W - MARGIN - 18 - 164 - 16, 76}; DrawTextW(dc, subtitle, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     EndPaint(h, &ps);
 }
 
@@ -566,7 +566,7 @@ static void buildMain() {
     nav(L"Nâng cao", C_NAV_ADVANCED, 2, 200);
 
     _hint = child(L"STATIC", L"", SS_LEFT, 0, 0, 1, 1, 0, fSmall);
-    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164 - 112, 24, 164, 32, C_SEG);
+    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 18 - 164, 24, 164, 32, C_SEG);
     languageChanged(core::language());
     _y = 92;
     if (_settingsPage == 0) {
