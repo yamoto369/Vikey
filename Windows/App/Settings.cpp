@@ -262,8 +262,7 @@ static LRESULT CALLBACK comboPopupProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (d) for (int i = 0; i < (int)d->items.size(); ++i) {
             RECT item = {5, 4 + i * COMBO_ITEM_H, rc.right - 5, 4 + (i + 1) * COMBO_ITEM_H};
             if (i == _comboHover || i == d->selected) {
-                Graphics gg(mem); gg.SetSmoothingMode(SmoothingModeAntiAlias);
-                roundRect(gg, RectF((float)item.left, (float)item.top, (float)(item.right-item.left), (float)(item.bottom-item.top)), 6,
+                roundRect(g, RectF((float)item.left, (float)item.top, (float)(item.right-item.left), (float)(item.bottom-item.top)), 6,
                     gp(i == _comboHover ? RGB(239, 244, 255) : RGB(247, 249, 252)), Color(0,0,0,0));
             }
             SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, i == d->selected ? ACCENT : TEXT);
@@ -311,17 +310,19 @@ static void openComboPopup(HWND combo) {
     if (!d || d->items.empty()) return;
     if (_comboPopup) { closeComboPopup(); }
     RECT r; GetWindowRect(combo, &r);
-    int height = (int)d->items.size() * COMBO_ITEM_H + 8;
     HMONITOR mon = MonitorFromWindow(combo, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = {sizeof(mi)}; GetMonitorInfoW(mon, &mi);
-    if (r.bottom + height > mi.rcWork.bottom) r.bottom = std::max(mi.rcWork.top + 8, r.top - height);
-    else r.bottom += 2;
-    int y = r.bottom + (r.bottom < r.top ? 0 : 0);
-    if (r.bottom < r.top) y = r.top - height;
-    else y = r.bottom;
-    int x = std::max(mi.rcWork.left + 4, std::min(r.left, mi.rcWork.right - (r.right-r.left) - 4));
+    int popupWidth = r.right - r.left;
+    int workHeight = mi.rcWork.bottom - mi.rcWork.top - 8;
+    int height = std::min((int)d->items.size() * COMBO_ITEM_H + 8, workHeight);
+    int y = r.bottom + 2;
+    if (y + height > mi.rcWork.bottom - 4) {
+        y = r.top - height;
+        if (y < mi.rcWork.top + 4) y = mi.rcWork.bottom - height - 4;
+    }
+    int x = std::max(mi.rcWork.left + 4, std::min(r.left, mi.rcWork.right - popupWidth - 4));
     HWND popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"VikeyComboPopup", L"",
-        WS_POPUP, x, y, r.right-r.left, height, GetParent(combo), nullptr, _inst, nullptr);
+        WS_POPUP, x, y, popupWidth, height, GetParent(combo), nullptr, _inst, nullptr);
     if (!popup) return;
     SetWindowLongPtrW(popup, GWLP_USERDATA, (LONG_PTR)combo);
     d->popup = popup; _comboPopup = popup; _comboHover = d->selected;
