@@ -4,6 +4,7 @@
 #include <string>
 #include <windowsx.h>
 #include <algorithm>
+#include <objidl.h>
 #define GDIPVER 0x0110
 #include <gdiplus.h>
 using namespace Gdiplus;
@@ -70,17 +71,8 @@ static HICON makeIcon(wchar_t letter, int size) {
         SolidBrush glyph(Color(255, 0, 0, 0));
         g.DrawString(L"E", 1, &font, textRect, &format, &glyph);
     }
-    HBITMAP colorBitmap = nullptr;
-    if (bitmap.GetHBITMAP(Color(0, 0, 0, 0), &colorBitmap) != Ok || !colorBitmap) return nullptr;
-    HBITMAP maskBitmap = CreateBitmap(size, size, 1, 1, nullptr);
-    if (!maskBitmap) { DeleteObject(colorBitmap); return nullptr; }
-    ICONINFO info = {};
-    info.fIcon = TRUE;
-    info.hbmMask = maskBitmap;
-    info.hbmColor = colorBitmap;
-    HICON icon = CreateIconIndirect(&info);
-    DeleteObject(maskBitmap);
-    DeleteObject(colorBitmap);
+    HICON icon = nullptr;
+    if (bitmap.GetHICON(&icon) != Ok) return nullptr;
     return icon;
 }
 static UINT trayDpi() {
@@ -249,7 +241,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     wcscpy_s(_nid.szTip, L"Vikey");
     _trayAdded = Shell_NotifyIconW(NIM_ADD, &_nid) != FALSE;
     vikey::core::setLanguageObserver([](int lang) { updateTray(lang); vikey::ui::languageChanged(lang); });
-    if (!vikey::core::start()) { MessageBoxW(nullptr, L"Không cài được bộ bắt phím (SetWindowsHookEx).", L"Vikey", MB_ICONERROR); return 1; }
+    if (!vikey::core::start()) {
+        MessageBoxW(nullptr, L"Không cài được bộ bắt phím (SetWindowsHookEx).", L"Vikey", MB_ICONERROR);
+        if (_trayAdded) Shell_NotifyIconW(NIM_DELETE, &_nid);
+        _trayAdded = false;
+        DestroyWindow(_hwnd);
+        destroyTrayIcons();
+        GdiplusShutdown(_gdipToken);
+        ReleaseMutex(single); CloseHandle(single);
+        return 1;
+    }
     updateTray(vikey::core::language());
     if (!vikey::prefs::has(L"FirstRunDone")) {
         vikey::ui::showSettings(inst, true);
