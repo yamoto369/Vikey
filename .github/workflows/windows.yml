@@ -78,7 +78,7 @@ jobs:
           path: Windows/build/App/Vikey.exe
 
   package:
-    name: Package portable builds
+    name: Prepare portable builds
     needs: build
     runs-on: windows-latest
 
@@ -103,10 +103,9 @@ jobs:
           "SSIGN=$exe" >> $env:GITHUB_ENV
         shell: pwsh
 
-      - name: Prepare portable ZIP
+      - name: Prepare portable executables
         run: |
-          $ver = (Select-String -Path project.yml -Pattern 'MARKETING_VERSION: "([^"]+)"').Matches[0].Groups[1].Value
-          New-Item -ItemType Directory -Force dist, portable | Out-Null
+          New-Item -ItemType Directory -Force dist | Out-Null
 
           function Sign($file) {
             if (-not $env:SSIGN) {
@@ -127,12 +126,10 @@ jobs:
             }
 
             Sign $src
-            Copy-Item $src "portable/Vikey-$arch.exe"
+            Copy-Item $src "dist/Vikey-$arch.exe"
           }
 
-          $zip = "dist/Vikey-$ver.zip"
-          Compress-Archive -Path "portable/Vikey-x64.exe", "portable/Vikey-arm64.exe" -DestinationPath $zip -Force
-          Get-Item $zip | Select-Object Name, Length | Format-Table -AutoSize
+          Get-ChildItem dist -File | Select-Object Name, Length | Format-Table -AutoSize
         shell: pwsh
 
       - name: Upload build artifacts
