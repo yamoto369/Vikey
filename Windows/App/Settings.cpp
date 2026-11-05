@@ -391,13 +391,20 @@ static LRESULT CALLBACK hotkeyProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
         Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
         bool recording = r && r->recording;
-        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 7, gp(RGB(230, 230, 230)), recording ? gp(ACCENT) : Color(0, 0, 0, 0), 1.5f);
+        bool focused = GetFocus() == h, hover = GetPropW(h, L"vkhover") != nullptr;
+        Color fieldFill = recording ? gp(RGB(235, 243, 255)) : gp(hover || focused ? RGB(247, 249, 252) : RGB(243, 245, 249));
+        Color fieldBorder = recording || focused ? gp(ACCENT) : gp(hover ? RGB(190, 204, 225) : BORDER);
+        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 7, fieldFill, fieldBorder, recording || focused ? 1.5f : 1.0f);
         SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, recording ? SECONDARY : TEXT);
         std::wstring t = recording ? L"Bấm phím tắt…" : (r && r->value == 0) ? L"Chưa đặt" : hotkeyDisplay(r ? r->value : 0);
         DrawTextW(mem, t.c_str(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY); SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0; }
+    case WM_MOUSEMOVE:
+        if (!GetPropW(h, L"vkhover")) { SetPropW(h, L"vkhover", (HANDLE)1); TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE, h, 0}; TrackMouseEvent(&t); InvalidateRect(h, nullptr, FALSE); }
+        return 0;
+    case WM_MOUSELEAVE: RemovePropW(h, L"vkhover"); InvalidateRect(h, nullptr, FALSE); return 0;
     case WM_LBUTTONUP: if (r) { if (r->recording) { r->recording = false; } else { SetFocus(h); r->recording = true; } InvalidateRect(h, nullptr, FALSE); } return 0;
-    case WM_KILLFOCUS: if (r) r->recording = false; InvalidateRect(h, nullptr, FALSE); return 0;
+    case WM_SETFOCUS: case WM_KILLFOCUS: if (m == WM_KILLFOCUS && r) r->recording = false; InvalidateRect(h, nullptr, FALSE); return 0;
     case WM_GETDLGCODE: return DLGC_WANTALLKEYS;
     case WM_CHAR: case WM_SYSCHAR: return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN: {
@@ -421,7 +428,7 @@ static LRESULT CALLBACK hotkeyProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         commitRecorder(h, 0xFE | mods); return 0; }
     case WM_ERASEBKGND: return 1;
     case WM_SETCURSOR: SetCursor(LoadCursor(nullptr, IDC_HAND)); return TRUE;
-    case WM_NCDESTROY: delete r; SetWindowLongPtrW(h, GWLP_USERDATA, 0); RemovePropW(h, L"vkbg"); break;
+    case WM_NCDESTROY: delete r; SetWindowLongPtrW(h, GWLP_USERDATA, 0); RemovePropW(h, L"vkbg"); RemovePropW(h, L"vkhover"); break;
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -763,8 +770,30 @@ static std::wstring practiceText() {
     return core::language() == 1 ? L"Gõ đúng các phím bên dưới, kể cả tiếng Anh. Vikey bỏ dấu cho tiếng Việt và để nguyên tiếng Anh."
                                  : L"Bạn đang ở tiếng Anh: bấm " + hotkeyDisplay(currentHotkey()) + L" để sang tiếng Việt, rồi gõ các phím bên dưới.";
 }
+// Fluent TextField treatment for native EDIT controls: keep native text/input behavior,
+// while adding a clear hover and keyboard-focus outline.
 static LRESULT CALLBACK practiceEditProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR) {
-    if (m == WM_KEYDOWN && w == VK_RETURN) { core::resetTyping(); int i = (int)id; SetFocus(_practiceEdit[std::min(i + 1, 2)]); return 0; }   // onSubmit
+    if (m == WM_MOUSEMOVE && !GetPropW(h, L"vkhover")) {
+        SetPropW(h, L"vkhover", (HANDLE)1);
+        TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE, h, 0}; TrackMouseEvent(&t);
+        InvalidateRect(h, nullptr, FALSE);
+    }
+    if (m == WM_MOUSELEAVE) { RemovePropW(h, L"vkhover"); InvalidateRect(h, nullptr, FALSE); }
+    if (m == WM_PAINT) {
+        LRESULT result = DefSubclassProc(h, m, w, l);
+        RECT rc; GetClientRect(h, &rc);
+        HDC dc = GetDC(h);
+        Graphics g(dc); g.SetSmoothingMode(SmoothingModeAntiAlias);
+        bool focused = GetFocus() == h, hover = GetPropW(h, L"vkhover") != nullptr;
+        Color edge = focused ? gp(ACCENT) : gp(hover ? RGB(190, 204, 225) : BORDER);
+        Pen p(edge, focused ? 1.7f : 1.0f);
+        g.DrawRectangle(&p, 1.0f, 1.0f, (REAL)rc.right - 3.0f, (REAL)rc.bottom - 3.0f);
+        ReleaseDC(h, dc);
+        return result;
+    }
+    if (m == WM_SETFOCUS || m == WM_KILLFOCUS) InvalidateRect(h, nullptr, FALSE);
+    if (m == WM_NCDESTROY) RemovePropW(h, L"vkhover");
+    if (m == WM_KEYDOWN && w == VK_RETURN) { core::resetTyping(); int i = (int)id; SetFocus(_practiceEdit[std::min(i + 1, 2)]); return 0; }
     if (m == WM_CHAR && (w == L'\r' || w == L'\n')) return 0;
     return DefSubclassProc(h, m, w, l);
 }
@@ -788,9 +817,9 @@ static void buildOnboarding() {
         _oy[1] = y; y += 2 * 20 + 12;   // both texts take two lines: switching VI/EN must not move the fields (Tony)
         for (int i = 0; i < 3; i++) {
             _oy[2 + i] = y;
-            HWND e = makeChild(_onbWin, L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, OP, y + 22, OCW - 34, 28, O_EDIT + i, fBody);
+            HWND e = makeChild(_onbWin, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL | WS_CLIPSIBLINGS, OP, y + 22, OCW - 34, 28, O_EDIT + i, fBody);
             SetWindowSubclass(e, practiceEditProc, i, 0);
-            SendMessageW(e, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+            SendMessageW(e, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(9, 9));
             _practiceEdit[i] = e; _practiceOk[i] = false;
             y += 22 + 28 + 12;
         }
@@ -894,7 +923,7 @@ static LRESULT CALLBACK onbProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0; }
     case WM_REBUILD: buildOnboarding(); return 0;
-    case WM_CTLCOLOREDIT: return (LRESULT)GetStockObject(WHITE_BRUSH);
+    case WM_CTLCOLOREDIT: { SetTextColor((HDC)wp, TEXT); SetBkColor((HDC)wp, GROUP); static HBRUSH editBrush = CreateSolidBrush(GROUP); return (LRESULT)editBrush; }
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY: _onbWin = nullptr; return 0;
     }
