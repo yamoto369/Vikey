@@ -20,7 +20,7 @@ static const UINT WM_TRAY = WM_APP + 1;
 static const UINT WM_VIKEY_SETLANG = WM_APP + 2;   // tests: wParam = language (0 English, 1 Vietnamese)
 static const UINT WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");   // Explorer (re)started: the tray is empty
 static const UINT TIMER_FLUSH = 1;
-enum { ID_VIET = 100, ID_ENG, ID_SETTINGS, ID_AUTOSWITCH, ID_LOGTOGGLE, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
+enum { ID_VIET = 100, ID_ENG, ID_AUTOSWITCH, ID_LOGTOGGLE, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
 
 static HWND _hwnd; static NOTIFYICONDATAW _nid = {};
 static HICON _iconV, _iconE;
@@ -70,8 +70,6 @@ static void showMenu() {
     AppendMenuW(m, MF_STRING | (core::language() ? MF_CHECKED : 0), ID_VIET, (L"Tiếng Việt\t" + hotkeyLabel()).c_str());
     AppendMenuW(m, MF_STRING | (prefs::getInt(L"AutoSwitchByTyping", 1) ? MF_CHECKED : 0), ID_AUTOSWITCH, L"Tự chuyển Anh/Việt");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, ID_SETTINGS, L"Mở Vikey…");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_GUIDE, L"Hướng dẫn…");
     AppendMenuW(m, MF_STRING, ID_ABOUT, L"Giới thiệu Vikey");
     HMENU dbg = CreatePopupMenu();
@@ -96,7 +94,6 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         switch (LOWORD(wp)) {
         case ID_VIET: core::setLanguageByUser(!core::language()); break;
         case ID_AUTOSWITCH: toggle(L"AutoSwitchByTyping", 1); break;
-        case ID_SETTINGS: ui::showSettings(GetModuleHandleW(nullptr), false); break;
         case ID_ABOUT: ui::showAbout(GetModuleHandleW(nullptr)); break;
         case ID_GUIDE: ui::showOnboarding(GetModuleHandleW(nullptr)); break;
         case ID_LOGTOGGLE: toggle(L"TypingLogEnabled", 0); break;
@@ -145,7 +142,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     vikey::core::setLanguageObserver([](int lang) { updateTray(lang); vikey::ui::languageChanged(lang); });
     if (!vikey::core::start()) { MessageBoxW(nullptr, L"Không cài được bộ bắt phím (SetWindowsHookEx).", L"Vikey", MB_ICONERROR); return 1; }
     updateTray(vikey::core::language());
-    if (!vikey::prefs::has(L"FirstRunDone")) vikey::ui::showSettings(inst, true);
+    if (!vikey::prefs::has(L"FirstRunDone")) {
+        vikey::ui::showSettings(inst, true);
+    } else if (vikey::prefs::getInt(L"ShowWindowAtStartup", 1) != 0) {
+        vikey::ui::showSettings(inst, false);
+    }
     SetTimer(_hwnd, TIMER_FLUSH, 10000, nullptr);
     vikey::site::start(_hwnd);   // per-website memory and password fields, read off the hook thread
     MSG msg; while (GetMessageW(&msg, nullptr, 0, 0)) { TranslateMessage(&msg); DispatchMessageW(&msg); }

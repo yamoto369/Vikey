@@ -479,7 +479,7 @@ static HWND makeRecorder(HWND parent, const wchar_t* pref, int value, int x, int
 static void destroyChildren(HWND h) { std::vector<HWND> kids; for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) kids.push_back(c); for (HWND c : kids) DestroyWindow(c); }
 
 // ---- main window -----------------------------------------------------------------------------
-enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_UPDATE, C_LOGKEYS, C_STYLE, C_BLACKLIST,
+enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_SHOWWINDOW, C_LOGKEYS, C_STYLE, C_BLACKLIST,
        L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520,
        C_NAV_GENERAL = 600, C_NAV_TYPING, C_NAV_ADVANCED };
 static const UINT WM_REBUILD = WM_APP + 20;
@@ -628,7 +628,7 @@ static void buildMain() {
         endGroup();
         beginGroup(settingsGroup(2, 1).title);
         toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
-        toggleRow(L"Tự động cập nhật", L"Kiểm tra và cài đặt phiên bản mới khi có bản cập nhật.", C_UPDATE, prefs::getInt(L"AutoUpdate", 1) != 0);
+        toggleRow(L"Mở cửa sổ khi khởi động", L"Tự động hiển thị cửa sổ Vikey mỗi khi ứng dụng được mở.", C_SHOWWINDOW, prefs::getInt(L"ShowWindowAtStartup", 1) != 0);
         HWND bl = row(L"Ứng dụng ngoại lệ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 132, 32, WS_TABSTOP);
         SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
         endGroup();
@@ -673,7 +673,7 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case C_SPELL: flag(L"Spelling"); break;
         case C_RESTORE: flag(L"RestoreIfInvalidWord"); break;
         case C_LOGIN: prefs::setLaunchAtLogin(toggleOn(c)); setToggle(c, prefs::launchAtLogin()); break;
-        case C_UPDATE: prefs::setInt(L"AutoUpdate", toggleOn(c)); break;
+        case C_SHOWWINDOW: prefs::setInt(L"ShowWindowAtStartup", toggleOn(c)); break;
         case C_BLACKLIST: showBlacklist(_inst); break;
         }
         return 0; }
