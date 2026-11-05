@@ -441,7 +441,7 @@ static LRESULT CALLBACK tipProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 static void registerClasses(HINSTANCE inst) {
     static bool done = false; if (done) return; done = true;
-    struct { const wchar_t* name; WNDPROC proc; } cls[] = {{L"VikeyToggle", toggleProc}, {L"VikeySegmented", segProc}, {L"VikeyHotkey", hotkeyProc}, {L"VikeyTip", tipProc}, {L"VikeyButton", buttonProc}};
+    struct { const wchar_t* name; WNDPROC proc; } cls[] = {{L"VikeyToggle", toggleProc}, {L"VikeySegmented", segProc}, {L"VikeyHotkey", hotkeyProc}, {L"VikeyTip", tipProc}, {L"VikeyButton", buttonProc}, {L"VikeyCombo", comboProc}, {L"VikeyComboPopup", comboPopupProc}};
     for (auto& c : cls) { WNDCLASSW wc = {}; wc.lpfnWndProc = c.proc; wc.hInstance = inst; wc.lpszClassName = c.name; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); RegisterClassW(&wc); }
 }
 static HWND makeChild(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int id, HFONT f = nullptr) {
@@ -556,14 +556,14 @@ static void buildMain() {
         endGroup();
     } else if (_settingsPage == 1) {
         beginGroup(L"Kiểu gõ");
-        HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"COMBOBOX", C_STYLE, 210, 240, CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP);
+        HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"VikeyCombo", C_STYLE, 210, 36, WS_TABSTOP);
         for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
         SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
-        SetWindowPos(style, nullptr, W - MARGIN - 18 - 210, _y - ROW + 6, 210, 240, SWP_NOZORDER);
-        HWND mark = row(L"Đặt dấu", L"Chọn vị trí dấu thanh cho các tổ hợp oa, oe và uy.", L"COMBOBOX", C_MARK, 180, 220, CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP);
+        SetWindowPos(style, nullptr, W - MARGIN - 18 - 210, _y - ROW + 2, 210, 36, SWP_NOZORDER);
+        HWND mark = row(L"Đặt dấu", L"Chọn vị trí dấu thanh cho các tổ hợp oa, oe và uy.", L"VikeyCombo", C_MARK, 180, 36, WS_TABSTOP);
         SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy");
         SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
-        SetWindowPos(mark, nullptr, W - MARGIN - 18 - 180, _y - ROW + 6, 180, 220, SWP_NOZORDER);
+        SetWindowPos(mark, nullptr, W - MARGIN - 18 - 180, _y - ROW + 2, 180, 36, SWP_NOZORDER);
         endGroup();
         beginGroup(L"Kiểm tra");
         toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
@@ -590,36 +590,6 @@ static void buildMain() {
 static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: paintMain(h); return 0;
-    case WM_MEASUREITEM: {
-        MEASUREITEMSTRUCT* mi = (MEASUREITEMSTRUCT*)lp;
-        if (mi->CtlType == ODT_COMBOBOX && (mi->CtlID == C_STYLE || mi->CtlID == C_MARK)) {
-            mi->itemHeight = 30; return TRUE;
-        }
-        break;
-    }
-    case WM_DRAWITEM: {
-        DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
-        if (di->CtlType == ODT_COMBOBOX && (di->CtlID == C_STYLE || di->CtlID == C_MARK)) {
-            RECT r = di->rcItem;
-            bool selected = (di->itemState & ODS_SELECTED) != 0;
-            bool focused = (di->itemState & ODS_FOCUS) != 0;
-            HBRUSH bg = CreateSolidBrush((di->itemState & ODS_COMBOBOXEDIT) ? GROUP : (selected ? RGB(239, 244, 255) : GROUP));
-            FillRect(di->hDC, &r, bg); DeleteObject(bg);
-            if (di->itemID != (UINT)-1) {
-                wchar_t label[128] = {};
-                SendMessageW(di->hwndItem, CB_GETLBTEXT, di->itemID, (LPARAM)label);
-                SetBkMode(di->hDC, TRANSPARENT);
-                SetTextColor(di->hDC, TEXT);
-                SelectObject(di->hDC, fBody);
-                RECT tr = r; tr.left += 12; tr.right -= 28;
-                DrawTextW(di->hDC, label, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            }
-            // The native combo button already paints its dropdown chevron; do not draw a second one.
-            if (focused) DrawFocusRect(di->hDC, &r);
-            return TRUE;
-        }
-        break;
-    }
     case WM_CTLCOLORSTATIC: { static HBRUSH bgBrush = CreateSolidBrush(BG), groupBrush = CreateSolidBrush(GROUP); SetBkMode((HDC)wp, TRANSPARENT); HWND c = (HWND)lp; SetTextColor((HDC)wp, c == _hint ? SECONDARY : TEXT); return (LRESULT)(c == _hint ? bgBrush : groupBrush); }
     case WM_COMMAND: {
         int id = LOWORD(wp); HWND c = (HWND)lp;
