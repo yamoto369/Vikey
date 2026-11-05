@@ -2,7 +2,7 @@
 // icon, wordmark, hotkey hint and the Tiếng Việt / English switch, then a grouped form), the
 // onboarding (OnboardingView.swift minus the Accessibility step), the About panel, the
 // Acknowledgements window and the typing-log window. Drawn with GDI+ so the toggles, segmented
-// control and rounded groups look like the macOS ones.
+// controls and grouped surfaces follow a lightweight Fluent-inspired Windows visual system.
 #define _HAS_STD_BYTE 0
 #include "Settings.h"
 #include "Core.h"
@@ -13,6 +13,7 @@
 #include <windowsx.h>
 #include <shellapi.h>
 #include <objidl.h>
+#include <dwmapi.h>
 #define GDIPVER 0x0110
 namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
@@ -30,18 +31,19 @@ namespace vikey { namespace ui {
 
 // ---- shared look ---------------------------------------------------------------------------
 static HFONT fBody, fBodyBold, fSmall, fWordmark, fTitle, fMono, fTitle2, fCallout, fMonoBold, fWordmark24;
-static const COLORREF BG = RGB(246, 246, 246), GROUP = RGB(255, 255, 255), BORDER = RGB(226, 226, 226), SEP = RGB(236, 236, 236);
-static const COLORREF TEXT = RGB(0, 0, 0), SECONDARY = RGB(110, 110, 115), TERTIARY = RGB(170, 170, 175), ACCENT = RGB(10, 124, 255), GREEN = RGB(52, 199, 89), TOGGLE_OFF = RGB(233, 233, 235);
-static const COLORREF BRAND = RGB(79, 70, 229);   // design/BRAND.md #4F46E5
-static const int W = 460, MARGIN = 20, ROW = 34, GAP = 12, RADIUS = 10;   // fits a 1366x768 screen with every row shown
+static const COLORREF BG = RGB(245, 247, 250), GROUP = RGB(255, 255, 255), BORDER = RGB(226, 232, 240), SEP = RGB(237, 241, 246);
+static const COLORREF TEXT = RGB(31, 41, 55), SECONDARY = RGB(100, 116, 139), TERTIARY = RGB(148, 163, 184), ACCENT = RGB(37, 99, 235), GREEN = RGB(22, 163, 74), TOGGLE_OFF = RGB(226, 232, 240);
+static const COLORREF BRAND = RGB(37, 99, 235);   // Fluent-inspired blue accent
+static const int W = 720, MARGIN = 24, CONTENT_X = 220, ROW = 40, GAP = 12, RADIUS = 12;
 static ULONG_PTR gdipToken = 0;
 static HINSTANCE _inst;
 static void initLook() {
     if (fBody) return;
     GdiplusStartupInput in; GdiplusStartup(&gdipToken, &in, nullptr);
-    auto mk = [](int px, int weight, const wchar_t* face = L"Segoe UI") { return CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, face); };
-    fBody = mk(15, FW_NORMAL); fBodyBold = mk(15, FW_SEMIBOLD); fSmall = mk(13, FW_NORMAL); fWordmark = mk(24, FW_BOLD); fTitle = mk(17, FW_SEMIBOLD); fMono = mk(13, FW_NORMAL, L"Consolas");
-    fTitle2 = mk(20, FW_SEMIBOLD); fCallout = mk(14, FW_NORMAL); fMonoBold = mk(15, FW_BOLD, L"Consolas"); fWordmark24 = mk(26, FW_BOLD);
+    auto mk = [](int px, int weight, const wchar_t* face = L"Segoe UI Variable Text") { return CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, face); };
+    // Segoe UI Variable is available on Windows 11; the font mapper falls back to Segoe UI on older systems.
+    fBody = mk(16, FW_NORMAL); fBodyBold = mk(16, FW_SEMIBOLD); fSmall = mk(14, FW_NORMAL); fWordmark = mk(28, FW_BOLD); fTitle = mk(18, FW_SEMIBOLD); fMono = mk(14, FW_NORMAL, L"Consolas");
+    fTitle2 = mk(22, FW_SEMIBOLD); fCallout = mk(15, FW_NORMAL); fMonoBold = mk(16, FW_BOLD, L"Consolas"); fWordmark24 = mk(28, FW_BOLD);
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_LINK_CLASS | ICC_BAR_CLASSES}; InitCommonControlsEx(&icc);
 }
 static Color gp(COLORREF c, BYTE a = 255) { return Color(a, GetRValue(c), GetGValue(c), GetBValue(c)); }
@@ -83,6 +85,15 @@ static void centerOnMouseScreen(HWND h) {
 }
 static void bringToFront(HWND h) { ShowWindow(h, SW_SHOW); SetForegroundWindow(h); }
 
+// Ask DWM for native Windows 11 rounded window corners and a subtle Fluent border.
+static void applyFluentFrame(HWND h) {
+    if (!h) return;
+    const DWORD rounded = 2; // DWMWCP_ROUND
+    const COLORREF border = RGB(226, 232, 240);
+    DwmSetWindowAttribute(h, 33, &rounded, sizeof(rounded)); // DWMWA_WINDOW_CORNER_PREFERENCE
+    DwmSetWindowAttribute(h, 34, &border, sizeof(border));   // DWMWA_BORDER_COLOR
+}
+
 // Lines of text with links, drawn by hand so they can be centred (About) and hit-tested.
 struct Seg { std::wstring text; std::wstring url; HFONT font; COLORREF color; };
 struct Link { RECT r; std::wstring url; };
@@ -106,6 +117,20 @@ static const Link* linkAt(const std::vector<Link>& links, LPARAM lp) { POINT p =
 static COLORREF bgOf(HWND h) { UINT_PTR v = (UINT_PTR)GetPropW(h, L"vkbg"); return v ? (COLORREF)(v - 1) : GROUP; }
 static void setBg(HWND h, COLORREF c) { SetPropW(h, L"vkbg", (HANDLE)(UINT_PTR)(c + 1)); }
 
+// Shared Fluent treatment for report-style lists used by the blacklist and typing log.
+static void applyFluentListView(HWND list, bool fullRowSelect = true) {
+    if (!list) return;
+    DWORD styles = LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP;
+    if (fullRowSelect) styles |= LVS_EX_FULLROWSELECT;
+    ListView_SetExtendedListViewStyleEx(list, styles, styles);
+    ListView_SetBkColor(list, GROUP);
+    ListView_SetTextBkColor(list, GROUP);
+    ListView_SetTextColor(list, TEXT);
+    SendMessageW(list, WM_SETFONT, (WPARAM)fBody, TRUE);
+    HWND header = ListView_GetHeader(list);
+    if (header) SendMessageW(header, WM_SETFONT, (WPARAM)fBodyBold, TRUE);
+}
+
 // Toggle switch: GWLP_USERDATA = on/off; BN_CLICKED to the parent on change; disabled = grayed.
 static LRESULT CALLBACK toggleProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
@@ -115,7 +140,7 @@ static LRESULT CALLBACK toggleProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
         Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
         bool on = GetWindowLongPtrW(h, GWLP_USERDATA) != 0, enabled = IsWindowEnabled(h);
-        Color fill = on ? gp(ACCENT, enabled ? 255 : 110) : gp(TOGGLE_OFF);   // macOS toggles use the accent colour
+        Color fill = on ? gp(ACCENT, enabled ? 255 : 110) : gp(TOGGLE_OFF);
         roundRect(g, RectF(0.5f, 0.5f, 39, 22), 11, fill, Color(0, 0, 0, 0));
         SolidBrush knob(Color(255, 255, 255, 255)); float kx = on ? 19.5f : 2.5f;
         SolidBrush shadow(Color(40, 0, 0, 0)); g.FillEllipse(&shadow, kx, 3.0f, 18.0f, 18.0f);
@@ -160,7 +185,7 @@ static LRESULT CALLBACK segProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
-// Push button, macOS style: "prominent" (accent fill, white text) or plain (light gray). GWLP_USERDATA = prominent.
+// Fluent button: GWLP_USERDATA = prominent/selected. Supports hover, pressed and keyboard focus.
 static LRESULT CALLBACK buttonProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_PAINT: {
@@ -168,25 +193,194 @@ static LRESULT CALLBACK buttonProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom); HGDIOBJ old = SelectObject(mem, bmp);
         HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
         Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
-        bool prominent = GetWindowLongPtrW(h, GWLP_USERDATA) != 0, enabled = IsWindowEnabled(h), down = GetPropW(h, L"vkdown") != nullptr;
-        Color fill = prominent ? gp(ACCENT, enabled ? (down ? 210 : 255) : 90) : gp(down ? RGB(218, 218, 222) : RGB(232, 232, 236));
-        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 7, fill, prominent ? Color(0, 0, 0, 0) : gp(RGB(214, 214, 218)));
-        wchar_t t[64]; GetWindowTextW(h, t, 64);
-        SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, prominent ? RGB(255, 255, 255) : (enabled ? TEXT : TERTIARY));
-        DrawTextW(mem, t, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY); SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0; }
-    case WM_LBUTTONDOWN: SetPropW(h, L"vkdown", (HANDLE)1); SetCapture(h); InvalidateRect(h, nullptr, FALSE); return 0;
+        bool selected = GetWindowLongPtrW(h, GWLP_USERDATA) != 0, enabled = IsWindowEnabled(h);
+        bool down = GetPropW(h, L"vkdown") != nullptr, hover = GetPropW(h, L"vkhover") != nullptr;
+        bool focused = GetFocus() == h;
+        Color fill = selected ? gp(ACCENT, enabled ? (down ? 220 : 255) : 100) :
+            gp(down ? RGB(218, 226, 240) : (hover ? RGB(239, 243, 250) : RGB(243, 245, 249)));
+        Color border = selected ? Color(0, 0, 0, 0) : gp(hover ? RGB(190, 204, 225) : BORDER);
+        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 8, fill, border);
+        if (focused) {
+            Pen focus(gp(ACCENT, 210), 1.4f);
+            g.DrawRectangle(&focus, 2.0f, 2.0f, (float)rc.right - 5.0f, (float)rc.bottom - 5.0f);
+        }
+        wchar_t t[96] = {}; GetWindowTextW(h, t, 96);
+        SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT);
+        SetTextColor(mem, selected ? RGB(255, 255, 255) : (enabled ? TEXT : TERTIARY));
+        RECT tr = rc; InflateRect(&tr, -8, 0);
+        DrawTextW(mem, t, -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0; }
+    case WM_MOUSEMOVE: {
+        if (!GetPropW(h, L"vkhover")) {
+            SetPropW(h, L"vkhover", (HANDLE)1);
+            TRACKMOUSEEVENT tme = {sizeof(tme), TME_LEAVE, h, 0}; TrackMouseEvent(&tme);
+            InvalidateRect(h, nullptr, FALSE);
+        }
+        break; }
+    case WM_MOUSELEAVE: RemovePropW(h, L"vkhover"); InvalidateRect(h, nullptr, FALSE); return 0;
+    case WM_LBUTTONDOWN:
+        if (IsWindowEnabled(h)) { SetPropW(h, L"vkdown", (HANDLE)1); SetCapture(h); InvalidateRect(h, nullptr, FALSE); }
+        return 0;
     case WM_LBUTTONUP: {
-        bool was = GetPropW(h, L"vkdown") != nullptr; RemovePropW(h, L"vkdown"); ReleaseCapture(); InvalidateRect(h, nullptr, FALSE);
+        bool was = GetPropW(h, L"vkdown") != nullptr; RemovePropW(h, L"vkdown");
+        if (GetCapture() == h) ReleaseCapture();
+        InvalidateRect(h, nullptr, FALSE);
         RECT rc; GetClientRect(h, &rc); POINT p = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
         if (was && PtInRect(&rc, p) && IsWindowEnabled(h)) SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(h), BN_CLICKED), (LPARAM)h);
         return 0; }
-    case WM_ENABLE: InvalidateRect(h, nullptr, FALSE); break;
+    case WM_KEYUP:
+        if ((w == VK_SPACE || w == VK_RETURN) && IsWindowEnabled(h))
+            SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(h), BN_CLICKED), (LPARAM)h);
+        return 0;
+    case WM_SETFOCUS: case WM_KILLFOCUS: case WM_ENABLE:
+        InvalidateRect(h, nullptr, FALSE); break;
     case WM_ERASEBKGND: return 1;
-    case WM_SETCURSOR: SetCursor(LoadCursor(nullptr, IDC_ARROW)); return TRUE;
-    case WM_NCDESTROY: RemovePropW(h, L"vkbg"); RemovePropW(h, L"vkdown"); break;
+    case WM_SETCURSOR: SetCursor(LoadCursor(nullptr, IsWindowEnabled(h) ? IDC_HAND : IDC_ARROW)); return TRUE;
+    case WM_NCDESTROY:
+        RemovePropW(h, L"vkbg"); RemovePropW(h, L"vkdown"); RemovePropW(h, L"vkhover"); break;
     }
     return DefWindowProcW(h, m, w, l);
+}
+
+// Fluent ComboBox: fully custom field and popup; no native COMBOBOX chrome/chevron.
+struct ComboData { std::vector<std::wstring> items; int selected = 0; HWND popup = nullptr; };
+static HWND _comboPopup = nullptr;
+static int _comboHover = -1;
+static constexpr int COMBO_ITEM_H = 34;
+
+static void closeComboPopup() {
+    if (_comboPopup && IsWindow(_comboPopup)) DestroyWindow(_comboPopup);
+    _comboPopup = nullptr; _comboHover = -1;
+}
+static void chooseComboItem(HWND combo, int index) {
+    auto* d = (ComboData*)GetWindowLongPtrW(combo, GWLP_USERDATA);
+    if (!d || index < 0 || index >= (int)d->items.size()) return;
+    d->selected = index;
+    InvalidateRect(combo, nullptr, FALSE);
+    HWND parent = GetParent(combo);
+    closeComboPopup();
+    if (IsWindow(combo)) SetFocus(combo);
+    SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(combo), CBN_SELCHANGE), (LPARAM)combo);
+}
+static LRESULT CALLBACK comboPopupProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    HWND combo = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+    auto* d = combo ? (ComboData*)GetWindowLongPtrW(combo, GWLP_USERDATA) : nullptr;
+    switch (m) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps); RECT rc; GetClientRect(h, &rc);
+        HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+        HGDIOBJ old = SelectObject(mem, bmp); HBRUSH bg = CreateSolidBrush(GROUP); FillRect(mem, &rc, bg); DeleteObject(bg);
+        Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
+        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 9, gp(GROUP), gp(BORDER));
+        if (d) for (int i = 0; i < (int)d->items.size(); ++i) {
+            RECT item = {5, 4 + i * COMBO_ITEM_H, rc.right - 5, 4 + (i + 1) * COMBO_ITEM_H};
+            if (i == _comboHover || i == d->selected) {
+                roundRect(g, RectF((float)item.left, (float)item.top, (float)(item.right-item.left), (float)(item.bottom-item.top)), 6,
+                    gp(i == _comboHover ? RGB(239, 244, 255) : RGB(247, 249, 252)), Color(0,0,0,0));
+            }
+            SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, i == d->selected ? ACCENT : TEXT);
+            RECT tr = item; tr.left += 12; DrawTextW(mem, d->items[i].c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            if (i == d->selected) { SetTextColor(mem, ACCENT); RECT mark = item; mark.right -= 12; DrawTextW(mem, L"✓", -1, &mark, DT_RIGHT | DT_VCENTER | DT_SINGLELINE); }
+        }
+        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0;
+    }
+    case WM_MOUSEMOVE: {
+        TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE, h, 0}; TrackMouseEvent(&t);
+        int i = (GET_Y_LPARAM(l) - 4) / COMBO_ITEM_H;
+        int next = d && i >= 0 && i < (int)d->items.size() ? i : -1;
+        if (next != _comboHover) { _comboHover = next; InvalidateRect(h, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_MOUSELEAVE: _comboHover = -1; InvalidateRect(h, nullptr, FALSE); return 0;
+    case WM_LBUTTONUP: {
+        int i = (GET_Y_LPARAM(l) - 4) / COMBO_ITEM_H;
+        if (d && i >= 0 && i < (int)d->items.size()) chooseComboItem(combo, i);
+        else closeComboPopup();
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (d && (w == VK_DOWN || w == VK_UP)) {
+            int n = (int)d->items.size(); if (n) { _comboHover = (_comboHover < 0 ? d->selected : _comboHover);
+                _comboHover = (w == VK_DOWN) ? std::min(n - 1, _comboHover + 1) : std::max(0, _comboHover - 1); InvalidateRect(h, nullptr, FALSE); }
+            return 0;
+        }
+        if (w == VK_RETURN && _comboHover >= 0) { chooseComboItem(combo, _comboHover); return 0; }
+        if (w == VK_ESCAPE) { closeComboPopup(); SetFocus(combo); return 0; }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(w) == WA_INACTIVE) { _comboPopup = nullptr; _comboHover = -1; if (d) d->popup = nullptr; DestroyWindow(h); return 0; }
+        break;
+    case WM_NCDESTROY:
+        if (_comboPopup == h) _comboPopup = nullptr;
+        if (d) d->popup = nullptr;
+        break;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+static void openComboPopup(HWND combo) {
+    auto* d = (ComboData*)GetWindowLongPtrW(combo, GWLP_USERDATA);
+    if (!d || d->items.empty()) return;
+    if (_comboPopup) { closeComboPopup(); }
+    RECT r; GetWindowRect(combo, &r);
+    HMONITOR mon = MonitorFromWindow(combo, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {sizeof(mi)}; GetMonitorInfoW(mon, &mi);
+    int popupWidth = r.right - r.left;
+    int workHeight = mi.rcWork.bottom - mi.rcWork.top - 8;
+    int height = std::min((int)d->items.size() * COMBO_ITEM_H + 8, workHeight);
+    int y = r.bottom + 2;
+    if (y + height > mi.rcWork.bottom - 4) {
+        y = r.top - height;
+        if (y < mi.rcWork.top + 4) y = mi.rcWork.bottom - height - 4;
+    }
+    int x = std::max(mi.rcWork.left + 4, std::min(r.left, mi.rcWork.right - popupWidth - 4));
+    HWND popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"VikeyComboPopup", L"",
+        WS_POPUP, x, y, popupWidth, height, GetParent(combo), nullptr, _inst, nullptr);
+    if (!popup) return;
+    SetWindowLongPtrW(popup, GWLP_USERDATA, (LONG_PTR)combo);
+    d->popup = popup; _comboPopup = popup; _comboHover = d->selected;
+    ShowWindow(popup, SW_SHOWNOACTIVATE); SetForegroundWindow(popup); SetFocus(popup);
+}
+static LRESULT CALLBACK comboProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    auto* d = (ComboData*)GetWindowLongPtrW(h, GWLP_USERDATA);
+    switch (m) {
+    case WM_CREATE: SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)new ComboData()); return 0;
+    case CB_ADDSTRING:
+        if (d) { d->items.push_back((const wchar_t*)l); return (LRESULT)d->items.size()-1; } return CB_ERR;
+    case CB_SETCURSEL:
+        if (d && (int)w >= 0 && (int)w < (int)d->items.size()) { d->selected = (int)w; InvalidateRect(h, nullptr, FALSE); return d->selected; } return CB_ERR;
+    case CB_GETCURSEL: return d ? d->selected : CB_ERR;
+    case WM_PAINT: {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps); RECT rc; GetClientRect(h, &rc);
+        HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+        HGDIOBJ old = SelectObject(mem, bmp); HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
+        Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
+        bool hover = GetPropW(h, L"vkhover") != nullptr, focused = GetFocus() == h;
+        roundRect(g, RectF(0.5f,0.5f,(float)rc.right-1,(float)rc.bottom-1), 7, gp(hover ? RGB(250,252,255) : GROUP), gp(focused ? ACCENT : (hover ? RGB(190,204,225) : BORDER)), focused ? 1.5f : 1.0f);
+        SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, TEXT);
+        RECT tr = rc; tr.left += 12; tr.right -= 34;
+        if (d && d->selected >= 0 && d->selected < (int)d->items.size()) DrawTextW(mem, d->items[d->selected].c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        // One custom chevron, rendered as a simple stroked V.
+        Pen arrow(gp(SECONDARY), 1.6f); REAL cx = (REAL)rc.right - 18, cy = (REAL)rc.bottom / 2.0f;
+        g.DrawLine(&arrow, cx - 4, cy - 2, cx, cy + 2); g.DrawLine(&arrow, cx, cy + 2, cx + 4, cy - 2);
+        BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY); SelectObject(mem,old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h,&ps); return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (!GetPropW(h,L"vkhover")) { SetPropW(h,L"vkhover",(HANDLE)1); TRACKMOUSEEVENT t={sizeof(t),TME_LEAVE,h,0}; TrackMouseEvent(&t); InvalidateRect(h,nullptr,FALSE); } return 0;
+    case WM_MOUSELEAVE: RemovePropW(h,L"vkhover"); InvalidateRect(h,nullptr,FALSE); return 0;
+    case WM_LBUTTONUP: openComboPopup(h); return 0;
+    case WM_KEYDOWN:
+        if (w == VK_SPACE || w == VK_RETURN || w == VK_DOWN) { openComboPopup(h); return 0; }
+        if (d && (w == VK_UP || w == VK_LEFT || w == VK_RIGHT)) {
+            int n = (int)d->items.size(); if (n) { d->selected = std::max(0, std::min(n-1, d->selected + ((w == VK_UP || w == VK_LEFT) ? -1 : 1))); InvalidateRect(h,nullptr,FALSE); SendMessageW(GetParent(h),WM_COMMAND,MAKEWPARAM(GetDlgCtrlID(h),CBN_SELCHANGE),(LPARAM)h); } return 0;
+        }
+        break;
+    case WM_SETFOCUS: case WM_KILLFOCUS: InvalidateRect(h,nullptr,FALSE); break;
+    case WM_SETCURSOR: SetCursor(LoadCursor(nullptr,IDC_HAND)); return TRUE;
+    case WM_NCDESTROY: if (d) delete d; RemovePropW(h,L"vkhover"); break;
+    }
+    return DefWindowProcW(h,m,w,l);
 }
 
 // Hotkey recorder (HotkeyRecorder.swift): a rounded gray box; click it, press a combination. The switch hotkey
@@ -211,13 +405,20 @@ static LRESULT CALLBACK hotkeyProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
         Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
         bool recording = r && r->recording;
-        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 7, gp(RGB(230, 230, 230)), recording ? gp(ACCENT) : Color(0, 0, 0, 0), 1.5f);
+        bool focused = GetFocus() == h, hover = GetPropW(h, L"vkhover") != nullptr;
+        Color fieldFill = recording ? gp(RGB(235, 243, 255)) : gp(hover || focused ? RGB(247, 249, 252) : RGB(243, 245, 249));
+        Color fieldBorder = recording || focused ? gp(ACCENT) : gp(hover ? RGB(190, 204, 225) : BORDER);
+        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 7, fieldFill, fieldBorder, recording || focused ? 1.5f : 1.0f);
         SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, recording ? SECONDARY : TEXT);
         std::wstring t = recording ? L"Bấm phím tắt…" : (r && r->value == 0) ? L"Chưa đặt" : hotkeyDisplay(r ? r->value : 0);
         DrawTextW(mem, t.c_str(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY); SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0; }
+    case WM_MOUSEMOVE:
+        if (!GetPropW(h, L"vkhover")) { SetPropW(h, L"vkhover", (HANDLE)1); TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE, h, 0}; TrackMouseEvent(&t); InvalidateRect(h, nullptr, FALSE); }
+        return 0;
+    case WM_MOUSELEAVE: RemovePropW(h, L"vkhover"); InvalidateRect(h, nullptr, FALSE); return 0;
     case WM_LBUTTONUP: if (r) { if (r->recording) { r->recording = false; } else { SetFocus(h); r->recording = true; } InvalidateRect(h, nullptr, FALSE); } return 0;
-    case WM_KILLFOCUS: if (r) r->recording = false; InvalidateRect(h, nullptr, FALSE); return 0;
+    case WM_SETFOCUS: case WM_KILLFOCUS: if (m == WM_KILLFOCUS && r) r->recording = false; InvalidateRect(h, nullptr, FALSE); return 0;
     case WM_GETDLGCODE: return DLGC_WANTALLKEYS;
     case WM_CHAR: case WM_SYSCHAR: return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN: {
@@ -241,7 +442,7 @@ static LRESULT CALLBACK hotkeyProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         commitRecorder(h, 0xFE | mods); return 0; }
     case WM_ERASEBKGND: return 1;
     case WM_SETCURSOR: SetCursor(LoadCursor(nullptr, IDC_HAND)); return TRUE;
-    case WM_NCDESTROY: delete r; SetWindowLongPtrW(h, GWLP_USERDATA, 0); RemovePropW(h, L"vkbg"); break;
+    case WM_NCDESTROY: delete r; SetWindowLongPtrW(h, GWLP_USERDATA, 0); RemovePropW(h, L"vkbg"); RemovePropW(h, L"vkhover"); break;
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -263,7 +464,7 @@ static LRESULT CALLBACK tipProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 static void registerClasses(HINSTANCE inst) {
     static bool done = false; if (done) return; done = true;
-    struct { const wchar_t* name; WNDPROC proc; } cls[] = {{L"VikeyToggle", toggleProc}, {L"VikeySegmented", segProc}, {L"VikeyHotkey", hotkeyProc}, {L"VikeyTip", tipProc}, {L"VikeyButton", buttonProc}};
+    struct { const wchar_t* name; WNDPROC proc; } cls[] = {{L"VikeyToggle", toggleProc}, {L"VikeySegmented", segProc}, {L"VikeyHotkey", hotkeyProc}, {L"VikeyTip", tipProc}, {L"VikeyButton", buttonProc}, {L"VikeyCombo", comboProc}, {L"VikeyComboPopup", comboPopupProc}};
     for (auto& c : cls) { WNDCLASSW wc = {}; wc.lpfnWndProc = c.proc; wc.hInstance = inst; wc.lpszClassName = c.name; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); RegisterClassW(&wc); }
 }
 static HWND makeChild(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int id, HFONT f = nullptr) {
@@ -278,10 +479,12 @@ static HWND makeRecorder(HWND parent, const wchar_t* pref, int value, int x, int
 static void destroyChildren(HWND h) { std::vector<HWND> kids; for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) kids.push_back(c); for (HWND c : kids) DestroyWindow(c); }
 
 // ---- main window -----------------------------------------------------------------------------
-enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_UPDATE, C_LOGKEYS, C_STYLE, C_BLACKLIST,
-       L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520 };
+enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_SHOWWINDOW, C_LOGKEYS, C_STYLE, C_BLACKLIST,
+       L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520,
+       C_NAV_GENERAL = 600, C_NAV_TYPING, C_NAV_ADVANCED };
 static const UINT WM_REBUILD = WM_APP + 20;
 static HWND _win, _seg, _hint, _logWin, _logList, _logSummary, _logGrid, _aboutWin, _onbWin, _ackWin, _tooltip;
+static int _settingsPage = 0;
 static std::map<int, HWND> _ctl;
 struct Group { int top, bottom; }; static std::vector<Group> _groups; static std::vector<std::pair<int, std::wstring>> _titles;   // y, title
 static std::vector<int> _seps;
@@ -293,24 +496,24 @@ static void addTip(HWND tip, const wchar_t* text) {
 }
 /// One form row: label (+ tip) on the left, a control on the right. Returns the control.
 static int _y; static int _groupTop = -1;
-static void beginGroup(const wchar_t* title) { if (title) { _titles.push_back({_y, title}); _y += 26; } _groupTop = _y; }
+static void beginGroup(const wchar_t* title) { if (title) { _titles.push_back({_y, title}); _y += 28; } _groupTop = _y; }
 static void endGroup() { _groups.push_back({_groupTop, _y}); _y += GAP; }
 static void rowLabel(const wchar_t* label, const wchar_t* tip) {
     if (_y != _groupTop) _seps.push_back(_y);
-    int ly = _y + (ROW - 20) / 2;
-    child(L"STATIC", label, SS_LEFT | SS_NOPREFIX, MARGIN + 16, ly, 300, 20, 0, fBody);
+    int ly = _y + (ROW - 24) / 2;
+    child(L"STATIC", label, SS_LEFT | SS_NOPREFIX, CONTENT_X + 18, ly, 360, 24, 0, fBody);
     HDC dc = GetDC(_win); int lw = textWidth(dc, fBody, label); ReleaseDC(_win, dc);
-    if (tip) { HWND t = child(L"VikeyTip", tip, 0, MARGIN + 16 + lw + 6, ly + 2, 16, 16, 0); addTip(t, tip); }
+    if (tip) { HWND t = child(L"VikeyTip", tip, 0, CONTENT_X + 18 + lw + 8, ly + 4, 16, 16, 0); addTip(t, tip); }
 }
 static HWND row(const wchar_t* label, const wchar_t* tip, const wchar_t* cls, int id, int cw, int ch, DWORD style = 0) {
     rowLabel(label, tip);
-    HWND c = child(cls, L"", style, W - MARGIN - 16 - cw, _y + (ROW - ch) / 2, cw, ch, id, fBody);
+    HWND c = child(cls, L"", style, W - MARGIN - 18 - cw, _y + (ROW - ch) / 2, cw, ch, id, fBody);
     _ctl[id] = c; _y += ROW; return c;
 }
 static HWND toggleRow(const wchar_t* label, const wchar_t* tip, int id, bool on) { HWND c = row(label, tip, L"VikeyToggle", id, 40, 23); setToggle(c, on); return c; }
 static HWND recorderRow(const wchar_t* label, const wchar_t* tip, const wchar_t* pref, int value, int id) {
     rowLabel(label, tip);
-    HWND c = makeRecorder(_win, pref, value, W - MARGIN - 16 - 134, _y + (ROW - 28) / 2, 134, 28, id, GROUP);
+    HWND c = makeRecorder(_win, pref, value, W - MARGIN - 18 - 170, _y + (ROW - 32) / 2, 170, 32, id, GROUP);
     _ctl[id] = c; _y += ROW; return c;
 }
 
@@ -325,59 +528,128 @@ static void paintMain(HWND h) {
     PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps); RECT rc; GetClientRect(h, &rc);
     HBRUSH bg = CreateSolidBrush(BG); FillRect(dc, &rc, bg); DeleteObject(bg);
     Graphics g(dc); g.SetSmoothingMode(SmoothingModeAntiAlias);
-    for (auto& gr : _groups) roundRect(g, RectF((float)MARGIN, (float)gr.top, (float)(W - 2 * MARGIN), (float)(gr.bottom - gr.top)), RADIUS, gp(GROUP), gp(BORDER));
-    Pen sep(gp(SEP), 1); for (int y : _seps) g.DrawLine(&sep, MARGIN + 16, y, W - MARGIN - 16, y);
+    // Persistent navigation rail and separate content canvas.
+    roundRect(g, RectF(8, 8, 194, (float)rc.bottom - 16), 14, gp(GROUP), gp(BORDER));
+    roundRect(g, RectF((float)CONTENT_X, 8, (float)(W - CONTENT_X - MARGIN), (float)rc.bottom - 16), 14, gp(BG), Color(0, 0, 0, 0));
+    for (auto& gr : _groups) roundRect(g, RectF((float)CONTENT_X, (float)gr.top, (float)(W - CONTENT_X - MARGIN), (float)(gr.bottom - gr.top)), RADIUS, gp(GROUP), gp(BORDER));
+    Pen sep(gp(SEP), 1); for (int y : _seps) g.DrawLine(&sep, CONTENT_X + 18, y, W - MARGIN - 18, y);
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, TEXT);
-    SelectObject(dc, fBodyBold); for (auto& t : _titles) { RECT r = {MARGIN + 16, t.first + 4, W, t.first + 26}; DrawTextW(dc, t.second.c_str(), -1, &r, DT_LEFT | DT_SINGLELINE); }
-    // header: icon, wordmark
-    HICON icon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 44, 44, LR_DEFAULTCOLOR);
-    if (icon) { DrawIconEx(dc, MARGIN, 14, icon, 44, 44, 0, nullptr, DI_NORMAL); DestroyIcon(icon); }
-    drawWordmark(dc, fWordmark, MARGIN + 56, 9);
+    SelectObject(dc, fTitle); for (auto& t : _titles) { RECT r = {CONTENT_X + 18, t.first + 2, W - MARGIN, t.first + 28}; SetTextColor(dc, BRAND); DrawTextW(dc, t.second.c_str(), -1, &r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX); }
+    // Brand and page header.
+    drawWordmark(dc, fWordmark, 24, 22);
+    SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
+    RECT navCaption = {24, 68, 180, 92}; DrawTextW(dc, L"CÀI ĐẶT", -1, &navCaption, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, fTitle2); SetTextColor(dc, TEXT);
+    const wchar_t* pageTitle = _settingsPage == 0 ? L"Tổng quan" : (_settingsPage == 1 ? L"Gõ tiếng Việt" : L"Nâng cao");
+    RECT titleRect = {CONTENT_X + 18, 22, W - MARGIN - 18 - 164 - 16, 54}; DrawTextW(dc, pageTitle, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
+    const wchar_t* subtitle = _settingsPage == 0 ? L"Thiết lập cách chuyển đổi và hành vi nhập liệu." :
+        (_settingsPage == 1 ? L"Tùy chỉnh kiểu gõ và quy tắc tiếng Việt." : L"Quản lý ghi nhớ, khởi động và ứng dụng ngoại lệ.");
+    RECT subRect = {CONTENT_X + 19, 54, W - MARGIN - 18 - 164 - 16, 76}; DrawTextW(dc, subtitle, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     EndPaint(h, &ps);
 }
 
+// Settings layout metadata is the single source for group structure and sizing.
+struct GroupLayout { const wchar_t* title; int itemCount; };
+struct PageLayout { const GroupLayout* groups; size_t groupCount; };
+static constexpr GroupLayout GENERAL_GROUPS[] = {
+    {L"Chuyển đổi", 2}, {L"Tự động", 2},
+};
+static constexpr GroupLayout TYPING_GROUPS[] = {
+    {L"Kiểu gõ", 2}, {L"Kiểm tra", 2},
+};
+static constexpr GroupLayout ADVANCED_GROUPS[] = {
+    {L"Ghi nhớ", 2}, {L"Hệ thống", 3},
+};
+static constexpr PageLayout SETTINGS_PAGES[] = {
+    {GENERAL_GROUPS, std::size(GENERAL_GROUPS)},
+    {TYPING_GROUPS, std::size(TYPING_GROUPS)},
+    {ADVANCED_GROUPS, std::size(ADVANCED_GROUPS)},
+};
+
+static int settingsPageContentBottom(const PageLayout& page) {
+    int y = 92;
+    for (size_t i = 0; i < page.groupCount; ++i)
+        y += 28 + page.groups[i].itemCount * ROW + GAP;
+    return y;
+}
+static const GroupLayout& settingsGroup(int page, size_t group) {
+    return SETTINGS_PAGES[page].groups[group];
+}
+
 static void buildMain() {
+    closeComboPopup();
     destroyChildren(_win);
     if (_tooltip) { DestroyWindow(_tooltip); _tooltip = nullptr; }
     _groups.clear(); _titles.clear(); _seps.clear(); _ctl.clear();
-    // header
-    _hint = child(L"STATIC", L"", SS_LEFT, MARGIN + 56, 43, 220, 18, 0, fSmall); setHint();   // under the wordmark's descender (the y was cut)
-    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 164, 22, 164, 30, C_SEG); languageChanged(core::language());
-    _y = 70;
-    int hk = currentHotkey();
-    beginGroup(nullptr);
-    recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", hk, C_HOTKEY);
-    toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt: lên giọng khi sang tiếng Việt, xuống giọng khi sang tiếng Anh.", C_BEEP, HAS_BEEP(hk) != 0);
-    endGroup();
-    beginGroup(L"Tự chuyển");
-    toggleRow(L"Tự chuyển Anh/Việt", L"Gõ một từ tiếng Anh khi đang ở tiếng Việt (hoặc ngược lại), Vikey tự sửa từ đó và chuyển chế độ. Bấm Xoá ngay sau đó để hoàn tác.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
-    toggleRow(L"Tạm dừng 5 giây", L"Khi bạn tự bấm chuyển Anh/Việt, Vikey không tự chuyển trong 5 giây, để giữ đúng lựa chọn của bạn.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
-    toggleRow(L"Nhớ theo ứng dụng", L"Vikey nhớ bạn dùng tiếng Anh hay tiếng Việt ở mỗi ứng dụng và tự chuyển lại khi bạn quay về ứng dụng đó.", C_SMART, prefs::getInt(L"UseSmartSwitchKey", 1) != 0);
-    toggleRow(L"Nhớ theo trang web", L"Trong Chrome, Edge, Brave, Vivaldi, Opera, Firefox: nhớ tiếng Anh hay tiếng Việt cho từng trang web. Chỉ đọc địa chỉ tab đang mở, ngay trên máy bạn.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
-    endGroup();
-    beginGroup(L"Gõ tiếng Việt");
-    HWND style = row(L"Kiểu gõ", L"Telex: [ ra ơ, ] ra ư, w ra ư. Telex đơn giản 1: [ ] là dấu ngoặc, w đứng riêng vẫn là w. Telex đơn giản 2: [ ] là dấu ngoặc, w vẫn ra ư. Cả ba kiểu đều gõ uw, ow, aw ra ư, ơ, ă.", L"COMBOBOX", C_STYLE, 150, 200, CBS_DROPDOWNLIST | WS_TABSTOP);
-    for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
-    SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
-    SetWindowPos(style, nullptr, W - MARGIN - 16 - 150, _y - ROW + 4, 150, 200, SWP_NOZORDER);
-    HWND mark = row(L"Đặt dấu", L"Vị trí dấu thanh với oa, oe, uy: kiểu mới (hoà, thuý) hoặc kiểu cũ (hòa, thúy).", L"COMBOBOX", C_MARK, 130, 200, CBS_DROPDOWNLIST | WS_TABSTOP);
-    SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy"); SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
-    SetWindowPos(mark, nullptr, W - MARGIN - 16 - 130, _y - ROW + 4, 130, 200, SWP_NOZORDER);
-    toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
-    toggleRow(L"Trả lại phím khi sai", L"Khi gõ xong một từ sai chính tả tiếng Việt, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
-    endGroup();
-    beginGroup(nullptr);
-    toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
-    toggleRow(L"Tự động cập nhật", L"Mỗi ngày Vikey kiểm tra bản mới trên vikey.app, tự tải về và cài khi bạn thoát Vikey hoặc tắt máy.", C_UPDATE, prefs::getInt(L"AutoUpdate", 1) != 0);
-    HWND bl = row(L"Ứng dụng không dùng bộ gõ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 120, 26, WS_TABSTOP);
-    SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
-    endGroup();
-    refreshEnabled();
-    RECT wr = {0, 0, W, _y}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
-    SetWindowPos(_win, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    RedrawWindow(_win, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);   // a rebuilt combo box kept stale pixels
-}
 
+    // Sidebar navigation uses the same custom Fluent button primitive as the rest of the app.
+    auto nav = [&](const wchar_t* label, int id, int page, int y) {
+        HWND b = makeChild(_win, L"VikeyButton", label, WS_TABSTOP, 20, y, 170, 40, id);
+        SetWindowLongPtrW(b, GWLP_USERDATA, page == _settingsPage ? 1 : 0);
+        setBg(b, GROUP);
+    };
+    nav(L"Tổng quan", C_NAV_GENERAL, 0, 104);
+    nav(L"Gõ tiếng Việt", C_NAV_TYPING, 1, 152);
+    nav(L"Nâng cao", C_NAV_ADVANCED, 2, 200);
+
+    _hint = child(L"STATIC", L"", SS_LEFT, 0, 0, 1, 1, 0, fSmall);
+    _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 18 - 164, 24, 164, 32, C_SEG);
+    languageChanged(core::language());
+    _y = 92;
+    if (_settingsPage == 0) {
+        beginGroup(settingsGroup(0, 0).title);
+        recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", currentHotkey(), C_HOTKEY);
+        toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt.", C_BEEP, HAS_BEEP(currentHotkey()) != 0);
+        endGroup();
+        beginGroup(settingsGroup(0, 1).title);
+        toggleRow(L"Tự chuyển Anh/Việt", L"Tự nhận biết và chuyển chế độ khi bạn bắt đầu gõ ngôn ngữ còn lại.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
+        toggleRow(L"Tạm dừng 5 giây", L"Khi bạn tự bấm chuyển Anh/Việt, Vikey tạm dừng tự chuyển trong 5 giây.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
+        endGroup();
+    } else if (_settingsPage == 1) {
+        beginGroup(settingsGroup(1, 0).title);
+        HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"VikeyCombo", C_STYLE, 210, 36, WS_TABSTOP);
+        for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
+        SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
+        SetWindowPos(style, nullptr, W - MARGIN - 18 - 210, _y - ROW + 2, 210, 36, SWP_NOZORDER);
+        HWND mark = row(L"Đặt dấu", L"Chọn vị trí dấu thanh cho các tổ hợp oa, oe và uy.", L"VikeyCombo", C_MARK, 180, 36, WS_TABSTOP);
+        SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy");
+        SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
+        SetWindowPos(mark, nullptr, W - MARGIN - 18 - 180, _y - ROW + 2, 180, 36, SWP_NOZORDER);
+        endGroup();
+        beginGroup(settingsGroup(1, 1).title);
+        toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
+        toggleRow(L"Trả lại phím khi sai", L"Khi từ sai chính tả, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
+        endGroup();
+    } else {
+        beginGroup(settingsGroup(2, 0).title);
+        toggleRow(L"Nhớ theo ứng dụng", L"Nhớ chế độ tiếng Anh hoặc tiếng Việt riêng cho từng ứng dụng.", C_SMART, prefs::getInt(L"UseSmartSwitchKey", 1) != 0);
+        toggleRow(L"Nhớ theo trang web", L"Nhớ chế độ nhập liệu cho từng trang web trong trình duyệt được hỗ trợ.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
+        endGroup();
+        beginGroup(settingsGroup(2, 1).title);
+        toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
+        toggleRow(L"Mở cửa sổ khi khởi động", L"Tự động hiển thị cửa sổ Vikey mỗi khi ứng dụng được mở.", C_SHOWWINDOW, prefs::getInt(L"ShowWindowAtStartup", 1) != 0);
+        HWND bl = row(L"Ứng dụng ngoại lệ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 132, 32, WS_TABSTOP);
+        SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
+        endGroup();
+    }
+    refreshEnabled();
+    // Keep one stable window height based on the tallest settings page.
+    // _y is the active page's actual extent; the helper measures the other pages
+    // with the same row/group metrics so adding rows updates the required height.
+    const int minClientHeight = 260;
+    const int bottomPadding = 24;
+    const int tallestPageBottom = std::max({
+        settingsPageContentBottom(SETTINGS_PAGES[0]),
+        settingsPageContentBottom(SETTINGS_PAGES[1]),
+        settingsPageContentBottom(SETTINGS_PAGES[2])
+    });
+    const int clientHeight = std::max(minClientHeight, tallestPageBottom + bottomPadding);
+    RECT wr = {0, 0, W, clientHeight};
+    AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
+    SetWindowPos(_win, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    RedrawWindow(_win, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
 static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: paintMain(h); return 0;
@@ -386,6 +658,9 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         int id = LOWORD(wp); HWND c = (HWND)lp;
         auto flag = [&](const wchar_t* pref) { prefs::setInt(pref, toggleOn(c)); core::reloadSettings(); refreshEnabled(); };
         switch (id) {
+        case C_NAV_GENERAL: _settingsPage = 0; buildMain(); break;
+        case C_NAV_TYPING: _settingsPage = 1; buildMain(); break;
+        case C_NAV_ADVANCED: _settingsPage = 2; buildMain(); break;
         case C_SEG: core::setLanguageByUser(GetWindowLongPtrW(_seg, GWLP_USERDATA) == 0 ? 1 : 0); break;
         case C_HOTKEY: setHint(); break;
         case C_BEEP: { int hk = (currentHotkey() & ~0x8000) | (toggleOn(c) ? 0x8000 : 0); prefs::setInt(L"SwitchKeyStatus", hk); if (Recorder* r = rec(_ctl[C_HOTKEY])) r->value = hk; core::reloadSettings(); afterHotkeyChange(); break; }
@@ -398,7 +673,7 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case C_SPELL: flag(L"Spelling"); break;
         case C_RESTORE: flag(L"RestoreIfInvalidWord"); break;
         case C_LOGIN: prefs::setLaunchAtLogin(toggleOn(c)); setToggle(c, prefs::launchAtLogin()); break;
-        case C_UPDATE: prefs::setInt(L"AutoUpdate", toggleOn(c)); break;
+        case C_SHOWWINDOW: prefs::setInt(L"ShowWindowAtStartup", toggleOn(c)); break;
         case C_BLACKLIST: showBlacklist(_inst); break;
         }
         return 0; }
@@ -420,22 +695,26 @@ void showSettings(HINSTANCE inst, bool firstRun) {
     if (_win) { bringToFront(_win); return; }
     static bool reg = false;
     if (!reg) { WNDCLASSW wc = {}; wc.lpfnWndProc = mainProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyMain"; wc.hbrBackground = nullptr; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP)); RegisterClassW(&wc); reg = true; }
-    _win = CreateWindowExW(0, L"VikeyMain", L"Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN, 0, 0, W, 600, nullptr, nullptr, inst, nullptr);
+    _win = CreateWindowExW(0, L"VikeyMain", L"Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN, 0, 0, W, 620, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_win);
     buildMain();
     centerOnMouseScreen(_win);   // Tony: open in the middle of the screen (Mac 1.0.16/1.0.18)
     bringToFront(_win);
 }
 
 // ---- application blacklist ----------------------------------------------------------------
-enum { BL_ADD = 800, BL_REMOVE, BL_DONE };
+enum { BL_ADD = 800, BL_DONE };
 static HWND _blacklistWin, _blacklistList;
+static const COLORREF BL_REMOVE_COLOR = RGB(120, 64, 38); // dark brown, intentionally quieter than the primary action
+
 static void refreshBlacklistList() {
     if (!_blacklistList) return;
     ListView_DeleteAllItems(_blacklistList);
     auto apps = core::blacklistedApps();
     for (int i = 0; i < (int)apps.size(); ++i) {
         LVITEMW item = {}; item.mask = LVIF_TEXT; item.iItem = i; item.pszText = (LPWSTR)apps[i].c_str();
-        ListView_InsertItem(_blacklistList, &item);
+        int row = ListView_InsertItem(_blacklistList, &item);
+        ListView_SetItemText(_blacklistList, row, 1, (LPWSTR)L"");
     }
 }
 static LRESULT CALLBACK blacklistProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
@@ -448,11 +727,37 @@ static LRESULT CALLBACK blacklistProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             else if (MessageBoxW(h, (L"Thêm " + current + L" vào danh sách không dùng bộ gõ?").c_str(), L"Vikey", MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 core::addFrontAppToBlacklist(); refreshBlacklistList();
             }
-        } else if (LOWORD(wp) == BL_REMOVE) {
-            int sel = ListView_GetNextItem(_blacklistList, -1, LVNI_SELECTED);
-            if (sel >= 0) { wchar_t exe[512] = {}; ListView_GetItemText(_blacklistList, sel, 0, exe, 512); core::removeAppFromBlacklist(exe); refreshBlacklistList(); }
         } else if (LOWORD(wp) == BL_DONE) DestroyWindow(h);
         return 0;
+    case WM_NOTIFY: {
+        NMHDR* hdr = (NMHDR*)lp;
+        if (hdr->hwndFrom != _blacklistList) break;
+        if (hdr->code == NM_CUSTOMDRAW) {
+            NMLVCUSTOMDRAW* cd = (NMLVCUSTOMDRAW*)lp;
+            if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+            if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) return CDRF_NOTIFYSUBITEMDRAW;
+            if (cd->nmcd.dwDrawStage == (CDDS_ITEMPREPAINT | CDDS_SUBITEM) && cd->iSubItem == 1)
+                return CDRF_NOTIFYPOSTPAINT;
+            if (cd->nmcd.dwDrawStage == (CDDS_ITEMPOSTPAINT | CDDS_SUBITEM) && cd->iSubItem == 1) {
+                RECT r = cd->nmcd.rc;
+                SetBkMode(cd->nmcd.hdc, TRANSPARENT);
+                SetTextColor(cd->nmcd.hdc, BL_REMOVE_COLOR);
+                HFONT old = (HFONT)SelectObject(cd->nmcd.hdc, fBodyBold);
+                DrawTextW(cd->nmcd.hdc, L"×", 1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                SelectObject(cd->nmcd.hdc, old);
+                return CDRF_DODEFAULT;
+            }
+        } else if (hdr->code == NM_CLICK) {
+            NMITEMACTIVATE* hit = (NMITEMACTIVATE*)lp;
+            if (hit->iItem >= 0 && hit->iSubItem == 1) {
+                wchar_t exe[512] = {};
+                ListView_GetItemText(_blacklistList, hit->iItem, 0, exe, 512);
+                if (exe[0]) { core::removeAppFromBlacklist(exe); refreshBlacklistList(); }
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY: _blacklistWin = nullptr; _blacklistList = nullptr; return 0;
     }
@@ -467,17 +772,35 @@ void showBlacklist(HINSTANCE inst) {
         wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1); wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP));
         RegisterClassW(&wc); registered = true;
     }
-    RECT wr = {0, 0, 430, 340}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
+    RECT wr = {0, 0, 520, 390}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
     _blacklistWin = CreateWindowExW(0, L"VikeyBlacklist", L"Ứng dụng không dùng bộ gõ", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_blacklistWin);
+
     _blacklistList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-        16, 16, 382, 230, _blacklistWin, nullptr, inst, nullptr);
+        20, 18, 480, 250, _blacklistWin, nullptr, inst, nullptr);
     ListView_SetExtendedListViewStyle(_blacklistList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
-    CreateWindowW(L"STATIC", L"Thêm ứng dụng đã mở Vikey trước đó. Đưa ứng dụng khác lên trước rồi mở lại Vikey để thêm ứng dụng đó.", WS_CHILD | WS_VISIBLE, 16, 246, 382, 18, _blacklistWin, nullptr, inst, nullptr);
-    LVCOLUMNW col = {}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = (LPWSTR)L"Tên ứng dụng (EXE)"; col.cx = 360; ListView_InsertColumn(_blacklistList, 0, &col);
-    CreateWindowW(L"BUTTON", L"Thêm ứng dụng hiện tại", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 16, 278, 176, 28, _blacklistWin, (HMENU)(INT_PTR)BL_ADD, inst, nullptr);
-    CreateWindowW(L"BUTTON", L"Gỡ khỏi danh sách", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 202, 278, 130, 28, _blacklistWin, (HMENU)(INT_PTR)BL_REMOVE, inst, nullptr);
-    CreateWindowW(L"BUTTON", L"Đóng", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 340, 278, 58, 28, _blacklistWin, (HMENU)(INT_PTR)BL_DONE, inst, nullptr);
+    SendMessageW(_blacklistList, WM_SETFONT, (WPARAM)fBody, TRUE);
+    HWND header = ListView_GetHeader(_blacklistList);
+    if (header) SendMessageW(header, WM_SETFONT, (WPARAM)fBodyBold, TRUE);
+
+    LVCOLUMNW nameCol = {}; nameCol.mask = LVCF_TEXT | LVCF_WIDTH; nameCol.pszText = (LPWSTR)L"Tên ứng dụng (EXE)"; nameCol.cx = 432;
+    ListView_InsertColumn(_blacklistList, 0, &nameCol);
+    LVCOLUMNW removeCol = {}; removeCol.mask = LVCF_TEXT | LVCF_WIDTH; removeCol.pszText = (LPWSTR)L""; removeCol.cx = 44;
+    ListView_InsertColumn(_blacklistList, 1, &removeCol);
+
+    HWND note = CreateWindowW(L"STATIC",
+        L"Thêm ứng dụng đã mở Vikey trước đó. Đưa ứng dụng khác lên trước rồi mở lại Vikey để thêm ứng dụng đó.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, 20, 280, 480, 42, _blacklistWin, nullptr, inst, nullptr);
+    SendMessageW(note, WM_SETFONT, (WPARAM)fSmall, TRUE);
+
+    HWND add = CreateWindowW(L"BUTTON", L"Thêm ứng dụng hiện tại", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        20, 338, 190, 32, _blacklistWin, (HMENU)(INT_PTR)BL_ADD, inst, nullptr);
+    SendMessageW(add, WM_SETFONT, (WPARAM)fBody, TRUE);
+    HWND done = CreateWindowW(L"BUTTON", L"Đóng", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        422, 338, 78, 32, _blacklistWin, (HMENU)(INT_PTR)BL_DONE, inst, nullptr);
+    SendMessageW(done, WM_SETFONT, (WPARAM)fBody, TRUE);
+
     refreshBlacklistList(); centerOnMouseScreen(_blacklistWin); bringToFront(_blacklistWin);
 }
 
@@ -500,8 +823,30 @@ static std::wstring practiceText() {
     return core::language() == 1 ? L"Gõ đúng các phím bên dưới, kể cả tiếng Anh. Vikey bỏ dấu cho tiếng Việt và để nguyên tiếng Anh."
                                  : L"Bạn đang ở tiếng Anh: bấm " + hotkeyDisplay(currentHotkey()) + L" để sang tiếng Việt, rồi gõ các phím bên dưới.";
 }
+// Fluent TextField treatment for native EDIT controls: keep native text/input behavior,
+// while adding a clear hover and keyboard-focus outline.
 static LRESULT CALLBACK practiceEditProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR) {
-    if (m == WM_KEYDOWN && w == VK_RETURN) { core::resetTyping(); int i = (int)id; SetFocus(_practiceEdit[std::min(i + 1, 2)]); return 0; }   // onSubmit
+    if (m == WM_MOUSEMOVE && !GetPropW(h, L"vkhover")) {
+        SetPropW(h, L"vkhover", (HANDLE)1);
+        TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE, h, 0}; TrackMouseEvent(&t);
+        InvalidateRect(h, nullptr, FALSE);
+    }
+    if (m == WM_MOUSELEAVE) { RemovePropW(h, L"vkhover"); InvalidateRect(h, nullptr, FALSE); }
+    if (m == WM_PAINT) {
+        LRESULT result = DefSubclassProc(h, m, w, l);
+        RECT rc; GetClientRect(h, &rc);
+        HDC dc = GetDC(h);
+        Graphics g(dc); g.SetSmoothingMode(SmoothingModeAntiAlias);
+        bool focused = GetFocus() == h, hover = GetPropW(h, L"vkhover") != nullptr;
+        Color edge = focused ? gp(ACCENT) : gp(hover ? RGB(190, 204, 225) : BORDER);
+        Pen p(edge, focused ? 1.7f : 1.0f);
+        g.DrawRectangle(&p, 1.0f, 1.0f, (REAL)rc.right - 3.0f, (REAL)rc.bottom - 3.0f);
+        ReleaseDC(h, dc);
+        return result;
+    }
+    if (m == WM_SETFOCUS || m == WM_KILLFOCUS) InvalidateRect(h, nullptr, FALSE);
+    if (m == WM_NCDESTROY) RemovePropW(h, L"vkhover");
+    if (m == WM_KEYDOWN && w == VK_RETURN) { core::resetTyping(); int i = (int)id; SetFocus(_practiceEdit[std::min(i + 1, 2)]); return 0; }
     if (m == WM_CHAR && (w == L'\r' || w == L'\n')) return 0;
     return DefSubclassProc(h, m, w, l);
 }
@@ -525,9 +870,9 @@ static void buildOnboarding() {
         _oy[1] = y; y += 2 * 20 + 12;   // both texts take two lines: switching VI/EN must not move the fields (Tony)
         for (int i = 0; i < 3; i++) {
             _oy[2 + i] = y;
-            HWND e = makeChild(_onbWin, L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, OP, y + 22, OCW - 34, 28, O_EDIT + i, fBody);
+            HWND e = makeChild(_onbWin, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL | WS_CLIPSIBLINGS, OP, y + 22, OCW - 34, 28, O_EDIT + i, fBody);
             SetWindowSubclass(e, practiceEditProc, i, 0);
-            SendMessageW(e, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+            SendMessageW(e, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(9, 9));
             _practiceEdit[i] = e; _practiceOk[i] = false;
             y += 22 + 28 + 12;
         }
@@ -631,7 +976,7 @@ static LRESULT CALLBACK onbProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0; }
     case WM_REBUILD: buildOnboarding(); return 0;
-    case WM_CTLCOLOREDIT: return (LRESULT)GetStockObject(WHITE_BRUSH);
+    case WM_CTLCOLOREDIT: { SetTextColor((HDC)wp, TEXT); SetBkColor((HDC)wp, GROUP); static HBRUSH editBrush = CreateSolidBrush(GROUP); return (LRESULT)editBrush; }
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY: _onbWin = nullptr; return 0;
     }
@@ -644,6 +989,7 @@ void showOnboarding(HINSTANCE inst) {
     if (!reg) { WNDCLASSW wc = {}; wc.lpfnWndProc = onbProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyOnboarding"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP)); RegisterClassW(&wc); reg = true; }
     RECT wr = {0, 0, OW, OH}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
     _onbWin = CreateWindowExW(0, L"VikeyOnboarding", L"Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN, 0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_onbWin);
     int s = prefs::getInt(L"OnboardingStep", -1); _step = s >= 0 && s < S_COUNT ? s : S_WELCOME;   // screenshots
     buildOnboarding();
     centerOnMouseScreen(_onbWin);
@@ -742,6 +1088,7 @@ void showAcknowledgements(HINSTANCE inst) {
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VSCROLL;
     RECT wr = {0, 0, AW, AH}; AdjustWindowRectEx(&wr, style, FALSE, 0); wr.right += GetSystemMetrics(SM_CXVSCROLL);
     _ackWin = CreateWindowExW(0, L"VikeyAck", L"Ghi nhận", style, 0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_ackWin);
     HDC dc = GetDC(_ackWin); _ackContent = paintAck(dc, 0, false); ReleaseDC(_ackWin, dc); _ackScroll = 0;
     SCROLLINFO si = {sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS, 0, _ackContent - 1, (UINT)AH, 0}; SetScrollInfo(_ackWin, SB_VERT, &si, TRUE);
     centerOnMouseScreen(_ackWin);
@@ -785,6 +1132,7 @@ void showAbout(HINSTANCE inst) {
     if (!reg) { WNDCLASSW wc = {}; wc.lpfnWndProc = aboutProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyAbout"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP)); RegisterClassW(&wc); reg = true; }
     RECT wr = {0, 0, 300, 304}; AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, 0);
     _aboutWin = CreateWindowExW(0, L"VikeyAbout", L"Giới thiệu Vikey", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 0, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, inst, nullptr);
+    applyFluentFrame(_aboutWin);
     centerOnMouseScreen(_aboutWin);
     bringToFront(_aboutWin);
 }
@@ -878,7 +1226,7 @@ void showTypingLog(HINSTANCE inst) {
     HWND old = _win; _win = _logWin;
     _logSummary = child(L"STATIC", L"", SS_LEFT, 20, 20, 700, 24, 0, fTitle);
     _logGrid = child(WC_LISTVIEWW, L"", LVS_REPORT | LVS_NOSORTHEADER | LVS_SINGLESEL | LVS_NOCOLUMNHEADER * 0, 20, 52, 720, 252, 0, fBody);
-    ListView_SetExtendedListViewStyle(_logGrid, LVS_EX_FULLROWSELECT);
+    applyFluentListView(_logGrid);
     const wchar_t* heads[] = {L"", L"Hôm nay", L"7 ngày", L"Tất cả"}; int widths[] = {330, 120, 120, 120};
     for (int i = 0; i < 4; i++) { LVCOLUMNW c = {}; c.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT; c.pszText = (LPWSTR)heads[i]; c.cx = widths[i]; c.fmt = i ? LVCFMT_RIGHT : LVCFMT_LEFT; ListView_InsertColumn(_logGrid, i, &c); }
     HWND tg = child(L"VikeyToggle", L"", 0, 20, 314, 40, 23, C_LOGKEYS); setToggle(tg, prefs::getInt(L"TypingLogKeys", 1) != 0);
@@ -886,7 +1234,7 @@ void showTypingLog(HINSTANCE inst) {
     child(L"STATIC", L"Không bao giờ ghi trong ô mật khẩu, trình quản lý mật khẩu và Terminal.", SS_LEFT, 68, 338, 600, 18, 1, fSmall);
     child(L"STATIC", L"Sự kiện gần đây", SS_LEFT, 20, 366, 300, 20, 0, fBodyBold);
     _logList = child(WC_LISTVIEWW, L"", LVS_REPORT | LVS_NOSORTHEADER | LVS_SINGLESEL, 20, 390, 720, 150, 0, fBody);
-    ListView_SetExtendedListViewStyle(_logList, LVS_EX_FULLROWSELECT);
+    applyFluentListView(_logList);
     const wchar_t* eh[] = {L"Thời gian", L"Ứng dụng / trang", L"Sự kiện", L"Chi tiết"}; int ew[] = {110, 160, 140, 290};
     for (int i = 0; i < 4; i++) { LVCOLUMNW c = {}; c.mask = LVCF_TEXT | LVCF_WIDTH; c.pszText = (LPWSTR)eh[i]; c.cx = ew[i]; ListView_InsertColumn(_logList, i, &c); }
     child(L"BUTTON", L"Làm mới", 0, 20, 556, 90, 28, L_REFRESH, fBody); child(L"BUTTON", L"Mở file log", 0, 118, 556, 100, 28, L_OPEN, fBody); child(L"BUTTON", L"Xoá log…", 0, 640, 556, 100, 28, L_CLEAR, fBody);

@@ -78,7 +78,7 @@ jobs:
           path: Windows/build/App/Vikey.exe
 
   package:
-    name: Package installers
+    name: Prepare portable builds
     needs: build
     runs-on: windows-latest
 
@@ -103,11 +103,8 @@ jobs:
           "SSIGN=$exe" >> $env:GITHUB_ENV
         shell: pwsh
 
-      - name: Installers (Inno Setup) + portable zips
+      - name: Prepare portable executables
         run: |
-          $ver = (Select-String -Path project.yml -Pattern 'MARKETING_VERSION: "([^"]+)"').Matches[0].Groups[1].Value
-          "$ver" | Out-Host
-
           New-Item -ItemType Directory -Force dist | Out-Null
 
           function Sign($file) {
@@ -123,24 +120,16 @@ jobs:
           }
 
           foreach ($arch in @('x64', 'arm64')) {
-            $src = "artifacts/Vikey-windows-$arch"
-
-            Sign "$src/Vikey.exe"
-
-            & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=$ver" "/DArch=$arch" "/DSrc=$((Resolve-Path $src).Path)" Windows/installer/Vikey.iss
-
-            if ($LASTEXITCODE -ne 0) {
-              throw "Inno Setup failed for $arch"
+            $src = "artifacts/Vikey-windows-$arch/Vikey.exe"
+            if (-not (Test-Path $src)) {
+              throw "Build output not found: $src"
             }
 
-            Sign "Windows/installer/out/Vikey-$ver-$arch-Setup.exe"
-
-            Move-Item "Windows/installer/out/Vikey-$ver-$arch-Setup.exe" dist/
-
-            Compress-Archive -Path "$src/Vikey.exe" -DestinationPath "dist/Vikey-$ver-$arch-portable.zip"
+            Sign $src
+            Copy-Item $src "dist/Vikey-$arch.exe"
           }
 
-          Get-ChildItem dist | Out-Host
+          Get-ChildItem dist -File | Select-Object Name, Length | Format-Table -AutoSize
         shell: pwsh
 
       - name: Upload build artifacts

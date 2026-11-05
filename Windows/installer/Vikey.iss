@@ -1,4 +1,4 @@
-; Vikey for Windows installer (Inno Setup 6). Per-user, no admin prompt, so the app can update itself.
+; Vikey for Windows installer (Inno Setup 6). Per-user, no admin prompt.
 ;   iscc /DVersion=1.0.14 /DArch=x64 /DSrc=..\build\App Vikey.iss
 #ifndef Version
   #define Version "0.0.0"
@@ -18,7 +18,6 @@ AppVerName=Vikey {#Version}
 AppPublisher=Typing Technology Company Limited
 AppPublisherURL=https://vikey.app
 AppSupportURL=https://vikey.app/faq
-AppUpdatesURL=https://vikey.app/download
 VersionInfoVersion={#Version}
 DefaultDirName={localappdata}\Programs\Vikey
 DisableDirPage=yes
@@ -66,14 +65,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: 
 
 [Run]
 Filename: "{app}\Vikey.exe"; Description: "Mở Vikey"; Flags: nowait postinstall skipifsilent
-; a self-update (Vikey runs the installer silently with /RELAUNCH=1) brings the app back
-Filename: "{app}\Vikey.exe"; Flags: nowait; Check: ShouldRelaunch
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM Vikey.exe /F"; Flags: runhidden; RunOnceId: "KillVikey"
 
-[Code]
-function ShouldRelaunch: Boolean;
-begin
-  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
-end;

@@ -1,17 +1,12 @@
 #define _HAS_STD_BYTE 0
 #include "CrashReporter.h"
-#include "Prefs.h"
 #include "resource.h"
-#include <commctrl.h>
-#include <winhttp.h>
-#include <shlobj.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
 #include <exception>
 #include <string>
-#include <vector>
 #include <algorithm>
 
 #ifndef VIKEY_BUILD
@@ -27,9 +22,6 @@
 
 namespace vikey { namespace crash {
 
-static const wchar_t* AUTO_KEY = L"CrashReportsAuto";        // the user chose "always send, don't ask"
-static const wchar_t* SEEN_KEY = L"CrashReportsSeenUntil";   // unix seconds, as a string
-static const wchar_t* DEFAULT_ENDPOINT = L"https://vikey.app/api/crash";
 
 // Everything the crash handler needs is prepared at install time: it runs in a broken process and should not allocate.
 static wchar_t _dir[MAX_PATH];
@@ -195,9 +187,22 @@ static void onInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, u
 static void onAbort(int) { fail("abort"); }
 
 void install() {
-    std::wstring d = prefs::appDataDir() + L"\\Crashes";
-    CreateDirectoryW(d.c_str(), nullptr);
-    wcsncpy_s(_dir, d.c_str(), _TRUNCATE);
+    // Store crash logs beside Vikey.exe so the whole app can remain portable.
+    wchar_t exe[MAX_PATH] = {0};
+    DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        wchar_t* slash = wcsrchr(exe, L'\\');
+        wchar_t* forwardSlash = wcsrchr(exe, L'/');
+        if (!slash || (forwardSlash && forwardSlash > slash)) slash = forwardSlash;
+        if (slash) *slash = L'\0';
+        wcsncpy_s(_dir, exe, _TRUNCATE);
+        if (wcslen(_dir) + 8 < MAX_PATH) {
+            wcscat_s(_dir, L"\\Crashes");
+            CreateDirectoryW(_dir, nullptr);
+        } else {
+            _dir[0] = L'\0';
+        }
+    }
     _mainThread = GetCurrentThreadId();
     strncpy_s(_os, windowsVersion().c_str(), _TRUNCATE);
     ULONG guarantee = 64 * 1024; SetThreadStackGuarantee(&guarantee);   // room for the handler after a stack overflow
@@ -214,126 +219,6 @@ void selfTestIfAsked() {
     const wchar_t* cl = GetCommandLineW();
     if (wcsstr(cl, L"--crash-self-test=terminate")) std::terminate();
     if (wcsstr(cl, L"--crash-self-test")) crashNow(nullptr);
-}
-
-// ---- next launch: ask, then send -----------------------------------------------------------------
-static long long nowUnix() { return (long long)time(nullptr); }
-static long long fileUnix(const FILETIME& ft) { ULARGE_INTEGER u; u.LowPart = ft.dwLowDateTime; u.HighPart = ft.dwHighDateTime; return (long long)(u.QuadPart / 10000000ULL) - 11644473600LL; }
-
-/// The newest report from the last 3 days that wasn't handled yet ("" if none).
-static std::wstring newestPending() {
-    long long seen = _wtoi64(prefs::getString(SEEN_KEY, L"0").c_str());
-    long long since = std::max(seen, nowUnix() - 3 * 86400);
-    WIN32_FIND_DATAW fd; std::wstring best; long long bestT = since;
-    HANDLE h = FindFirstFileW((std::wstring(_dir) + L"\\Vikey-*.txt").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return L"";
-    do {
-        long long t = fileUnix(fd.ftLastWriteTime);
-        if (t > bestT) { bestT = t; best = std::wstring(_dir) + L"\\" + fd.cFileName; }
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
-    return best;
-}
-
-static void replaceAllNoCase(std::string& s, const std::string& from, const std::string& to) {
-    if (from.empty()) return;
-    auto lower = [](std::string x) { for (auto& c : x) c = (char)tolower((unsigned char)c); return x; };
-    std::string ls = lower(s), lf = lower(from), out; size_t i = 0;
-    for (size_t at; (at = ls.find(lf, i)) != std::string::npos; i = at + lf.size()) { out.append(s, i, at - i); out += to; }
-    out.append(s, i, std::string::npos); s = out;
-}
-
-static void log(const std::string& line) {
-    HANDLE f = CreateFileW((std::wstring(_dir) + L"\\upload.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-    SYSTEMTIME t; GetLocalTime(&t); char ts[32]; _snprintf_s(ts, _TRUNCATE, "%04d-%02d-%02d %02d:%02d:%02d ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-    std::string l = ts + line + "\r\n"; DWORD w; WriteFile(f, l.data(), (DWORD)l.size(), &w, nullptr); CloseHandle(f);
-}
-
-static void send(const std::wstring& report) {
-    HANDLE f = CreateFileW(report.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-    std::string text(std::min<DWORD>(GetFileSize(f, nullptr), 1900000), 0); DWORD got = 0;
-    ReadFile(f, &text[0], (DWORD)text.size(), &got, nullptr); CloseHandle(f); text.resize(got);
-    wchar_t home[MAX_PATH] = {0};
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, home)) && home[0]) {
-        std::string h = narrow(home); replaceAllNoCase(text, h, "~");
-        std::replace(h.begin(), h.end(), '\\', '/'); replaceAllNoCase(text, h, "~");
-    }
-    std::string name = narrow(report.substr(report.find_last_of(L'\\') + 1));
-    char rnd[32]; _snprintf_s(rnd, _TRUNCATE, "vikey-%08lx%08lx", GetTickCount(), GetCurrentProcessId());
-    std::string boundary = rnd, body;
-    auto field = [&](const char* k, const std::string& v) { body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + k + "\"\r\n\r\n" + v + "\r\n"; };
-    field("platform", "windows"); field("version", std::string(VIKEY_VERSION) + " (" + VIKEY_BUILD + ")"); field("os", _os);
-    body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"report\"; filename=\"" + name + "\"\r\nContent-Type: text/plain\r\n\r\n" + text + "\r\n--" + boundary + "--\r\n";
-
-    std::wstring url = prefs::getString(L"crashEndpoint", L""); if (url.empty()) url = DEFAULT_ENDPOINT;
-    URL_COMPONENTS uc = {sizeof(uc)}; wchar_t host[256], path[2048]; uc.lpszHostName = host; uc.dwHostNameLength = 256; uc.lpszUrlPath = path; uc.dwUrlPathLength = 2048;
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return;
-    HINTERNET s = WinHttpOpen(L"Vikey/" VIKEY_VERSION_W, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!s) return;
-    HINTERNET c = WinHttpConnect(s, host, uc.nPort, 0);
-    HINTERNET r = c ? WinHttpOpenRequest(c, L"POST", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) : nullptr;
-    std::wstring headers = L"Content-Type: multipart/form-data; boundary=" + widen(boundary);
-    DWORD status = 0; std::string resp;
-    if (r && WinHttpSendRequest(r, headers.c_str(), (DWORD)-1L, (LPVOID)body.data(), (DWORD)body.size(), (DWORD)body.size(), 0) && WinHttpReceiveResponse(r, nullptr)) {
-        DWORD sl = sizeof(status);
-        WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &sl, WINHTTP_NO_HEADER_INDEX);
-        DWORD avail = 0;
-        while (WinHttpQueryDataAvailable(r, &avail) && avail && resp.size() < 4096) {
-            size_t at = resp.size(); resp.resize(at + avail); DWORD n = 0;
-            if (!WinHttpReadData(r, &resp[at], avail, &n)) break; resp.resize(at + n);
-        }
-    }
-    if (r) WinHttpCloseHandle(r); if (c) WinHttpCloseHandle(c); WinHttpCloseHandle(s);
-    char st[16]; _snprintf_s(st, _TRUNCATE, "%lu", status);
-    log("sent " + name + " -> " + st + " " + resp);
-}
-
-static HRESULT CALLBACK dialogCallback(HWND h, UINT msg, WPARAM, LPARAM, LONG_PTR) {
-    if (msg == TDN_CREATED) { SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE); SetForegroundWindow(h); }
-    return S_OK;
-}
-
-/// true = send. Sets "always send" when the box is ticked.
-static bool ask() {
-    const wchar_t* main = L"Vikey vừa bị thoát đột ngột";
-    const wchar_t* content = L"Gửi báo cáo lỗi để Vikey sửa lỗi này? Báo cáo chỉ có thông tin kỹ thuật: vị trí lỗi trong mã, phiên bản Vikey và Windows. Không có chữ bạn đã gõ.";
-    TASKDIALOG_BUTTON buttons[] = {{IDYES, L"Gửi báo cáo"}, {IDNO, L"Không gửi"}};
-    TASKDIALOGCONFIG tc = {sizeof(tc)};
-    tc.hInstance = GetModuleHandleW(nullptr);
-    tc.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
-    tc.pszWindowTitle = L"Vikey";
-    tc.pszMainIcon = MAKEINTRESOURCEW(IDI_APP);
-    tc.pszMainInstruction = main;
-    tc.pszContent = content;
-    tc.cButtons = 2; tc.pButtons = buttons; tc.nDefaultButton = IDYES;
-    tc.pszVerificationText = L"Luôn gửi, không hỏi lại";
-    tc.pfCallback = dialogCallback;
-    int button = 0; BOOL always = FALSE;
-    if (FAILED(TaskDialogIndirect(&tc, &button, nullptr, &always))) {   // no common controls 6: a plain message box
-        std::wstring text = std::wstring(main) + L"\n\n" + content;
-        button = MessageBoxW(nullptr, text.c_str(), L"Vikey", MB_YESNO | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
-        always = FALSE;
-    }
-    bool yes = button == IDYES;
-    if (yes && always) prefs::setInt(AUTO_KEY, 1);
-    return yes;
-}
-
-static DWORD WINAPI launchThread(LPVOID p) {
-    std::wstring* report = (std::wstring*)p;
-    if (prefs::getInt(AUTO_KEY, 0)) send(*report);
-    else { Sleep(1500); if (ask()) send(*report); }   // after the tray icon is up, like the Mac
-    delete report; return 0;
-}
-
-void checkAtLaunch() {
-    std::wstring newest = newestPending();
-    if (newest.empty()) return;
-    prefs::setString(SEEN_KEY, std::to_wstring(nowUnix()));   // handled, whatever the answer; older ones go with it
-    HANDLE t = CreateThread(nullptr, 0, launchThread, new std::wstring(newest), 0, nullptr);   // never on the typing thread
-    if (t) CloseHandle(t);
 }
 
 }} // namespace
