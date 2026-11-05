@@ -229,6 +229,144 @@ static LRESULT CALLBACK buttonProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
+// Fluent ComboBox: fully custom field and popup; no native COMBOBOX chrome/chevron.
+struct ComboData { std::vector<std::wstring> items; int selected = 0; HWND popup = nullptr; };
+static HWND _comboPopup = nullptr;
+static int _comboHover = -1;
+static constexpr int COMBO_ITEM_H = 34;
+
+static void closeComboPopup() {
+    if (_comboPopup && IsWindow(_comboPopup)) DestroyWindow(_comboPopup);
+    _comboPopup = nullptr; _comboHover = -1;
+}
+static void chooseComboItem(HWND combo, int index) {
+    auto* d = (ComboData*)GetWindowLongPtrW(combo, GWLP_USERDATA);
+    if (!d || index < 0 || index >= (int)d->items.size()) return;
+    d->selected = index;
+    InvalidateRect(combo, nullptr, FALSE);
+    HWND parent = GetParent(combo);
+    closeComboPopup();
+    SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(combo), CBN_SELCHANGE), (LPARAM)combo);
+}
+static LRESULT CALLBACK comboPopupProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    HWND combo = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+    auto* d = combo ? (ComboData*)GetWindowLongPtrW(combo, GWLP_USERDATA) : nullptr;
+    switch (m) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps); RECT rc; GetClientRect(h, &rc);
+        HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+        HGDIOBJ old = SelectObject(mem, bmp); HBRUSH bg = CreateSolidBrush(GROUP); FillRect(mem, &rc, bg); DeleteObject(bg);
+        Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
+        roundRect(g, RectF(0.5f, 0.5f, (float)rc.right - 1, (float)rc.bottom - 1), 9, gp(GROUP), gp(BORDER));
+        if (d) for (int i = 0; i < (int)d->items.size(); ++i) {
+            RECT item = {5, 4 + i * COMBO_ITEM_H, rc.right - 5, 4 + (i + 1) * COMBO_ITEM_H};
+            if (i == _comboHover || i == d->selected) {
+                Graphics gg(mem); gg.SetSmoothingMode(SmoothingModeAntiAlias);
+                roundRect(gg, RectF((float)item.left, (float)item.top, (float)(item.right-item.left), (float)(item.bottom-item.top)), 6,
+                    gp(i == _comboHover ? RGB(239, 244, 255) : RGB(247, 249, 252)), Color(0,0,0,0));
+            }
+            SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, i == d->selected ? ACCENT : TEXT);
+            RECT tr = item; tr.left += 12; DrawTextW(mem, d->items[i].c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            if (i == d->selected) { SetTextColor(mem, ACCENT); RECT mark = item; mark.right -= 12; DrawTextW(mem, L"✓", -1, &mark, DT_RIGHT | DT_VCENTER | DT_SINGLELINE); }
+        }
+        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0;
+    }
+    case WM_MOUSEMOVE: {
+        TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE, h, 0}; TrackMouseEvent(&t);
+        int i = (GET_Y_LPARAM(l) - 4) / COMBO_ITEM_H;
+        int next = d && i >= 0 && i < (int)d->items.size() ? i : -1;
+        if (next != _comboHover) { _comboHover = next; InvalidateRect(h, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_MOUSELEAVE: _comboHover = -1; InvalidateRect(h, nullptr, FALSE); return 0;
+    case WM_LBUTTONUP: {
+        int i = (GET_Y_LPARAM(l) - 4) / COMBO_ITEM_H;
+        if (d && i >= 0 && i < (int)d->items.size()) chooseComboItem(combo, i);
+        else closeComboPopup();
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (d && (w == VK_DOWN || w == VK_UP)) {
+            int n = (int)d->items.size(); if (n) { _comboHover = (_comboHover < 0 ? d->selected : _comboHover);
+                _comboHover = (w == VK_DOWN) ? std::min(n - 1, _comboHover + 1) : std::max(0, _comboHover - 1); InvalidateRect(h, nullptr, FALSE); }
+            return 0;
+        }
+        if (w == VK_RETURN && _comboHover >= 0) { chooseComboItem(combo, _comboHover); return 0; }
+        if (w == VK_ESCAPE) { closeComboPopup(); SetFocus(combo); return 0; }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(w) == WA_INACTIVE) { _comboPopup = nullptr; _comboHover = -1; if (d) d->popup = nullptr; DestroyWindow(h); return 0; }
+        break;
+    case WM_NCDESTROY:
+        if (_comboPopup == h) _comboPopup = nullptr;
+        if (d) d->popup = nullptr;
+        break;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+static void openComboPopup(HWND combo) {
+    auto* d = (ComboData*)GetWindowLongPtrW(combo, GWLP_USERDATA);
+    if (!d || d->items.empty()) return;
+    if (_comboPopup) { closeComboPopup(); }
+    RECT r; GetWindowRect(combo, &r);
+    int height = (int)d->items.size() * COMBO_ITEM_H + 8;
+    HMONITOR mon = MonitorFromWindow(combo, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {sizeof(mi)}; GetMonitorInfoW(mon, &mi);
+    if (r.bottom + height > mi.rcWork.bottom) r.bottom = std::max(mi.rcWork.top + 8, r.top - height);
+    else r.bottom += 2;
+    int y = r.bottom + (r.bottom < r.top ? 0 : 0);
+    if (r.bottom < r.top) y = r.top - height;
+    else y = r.bottom;
+    int x = std::max(mi.rcWork.left + 4, std::min(r.left, mi.rcWork.right - (r.right-r.left) - 4));
+    HWND popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"VikeyComboPopup", L"",
+        WS_POPUP, x, y, r.right-r.left, height, GetParent(combo), nullptr, _inst, nullptr);
+    if (!popup) return;
+    SetWindowLongPtrW(popup, GWLP_USERDATA, (LONG_PTR)combo);
+    d->popup = popup; _comboPopup = popup; _comboHover = d->selected;
+    ShowWindow(popup, SW_SHOWNOACTIVATE); SetForegroundWindow(popup); SetFocus(popup);
+}
+static LRESULT CALLBACK comboProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    auto* d = (ComboData*)GetWindowLongPtrW(h, GWLP_USERDATA);
+    switch (m) {
+    case WM_CREATE: SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)new ComboData()); return 0;
+    case CB_ADDSTRING:
+        if (d) { d->items.push_back((const wchar_t*)l); return (LRESULT)d->items.size()-1; } return CB_ERR;
+    case CB_SETCURSEL:
+        if (d && (int)w >= 0 && (int)w < (int)d->items.size()) { d->selected = (int)w; InvalidateRect(h, nullptr, FALSE); return d->selected; } return CB_ERR;
+    case CB_GETCURSEL: return d ? d->selected : CB_ERR;
+    case WM_PAINT: {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps); RECT rc; GetClientRect(h, &rc);
+        HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+        HGDIOBJ old = SelectObject(mem, bmp); HBRUSH bg = CreateSolidBrush(bgOf(h)); FillRect(mem, &rc, bg); DeleteObject(bg);
+        Graphics g(mem); g.SetSmoothingMode(SmoothingModeAntiAlias);
+        bool hover = GetPropW(h, L"vkhover") != nullptr, focused = GetFocus() == h;
+        roundRect(g, RectF(0.5f,0.5f,(float)rc.right-1,(float)rc.bottom-1), 7, gp(hover ? RGB(250,252,255) : GROUP), gp(focused ? ACCENT : (hover ? RGB(190,204,225) : BORDER)), focused ? 1.5f : 1.0f);
+        SelectObject(mem, fBody); SetBkMode(mem, TRANSPARENT); SetTextColor(mem, TEXT);
+        RECT tr = rc; tr.left += 12; tr.right -= 34;
+        if (d && d->selected >= 0 && d->selected < (int)d->items.size()) DrawTextW(mem, d->items[d->selected].c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        // One custom chevron, rendered as a simple stroked V.
+        Pen arrow(gp(SECONDARY), 1.6f); REAL cx = (REAL)rc.right - 18, cy = (REAL)rc.bottom / 2.0f;
+        g.DrawLine(&arrow, cx - 4, cy - 2, cx, cy + 2); g.DrawLine(&arrow, cx, cy + 2, cx + 4, cy - 2);
+        BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY); SelectObject(mem,old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h,&ps); return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (!GetPropW(h,L"vkhover")) { SetPropW(h,L"vkhover",(HANDLE)1); TRACKMOUSEEVENT t={sizeof(t),TME_LEAVE,h,0}; TrackMouseEvent(&t); InvalidateRect(h,nullptr,FALSE); } return 0;
+    case WM_MOUSELEAVE: RemovePropW(h,L"vkhover"); InvalidateRect(h,nullptr,FALSE); return 0;
+    case WM_LBUTTONUP: openComboPopup(h); return 0;
+    case WM_KEYDOWN:
+        if (w == VK_SPACE || w == VK_RETURN || w == VK_DOWN) { openComboPopup(h); return 0; }
+        if (d && (w == VK_UP || w == VK_LEFT || w == VK_RIGHT)) {
+            int n = (int)d->items.size(); if (n) { d->selected = std::max(0, std::min(n-1, d->selected + ((w == VK_UP || w == VK_LEFT) ? -1 : 1))); InvalidateRect(h,nullptr,FALSE); SendMessageW(GetParent(h),WM_COMMAND,MAKEWPARAM(GetDlgCtrlID(h),CBN_SELCHANGE),(LPARAM)h); } return 0;
+        }
+        break;
+    case WM_SETFOCUS: case WM_KILLFOCUS: InvalidateRect(h,nullptr,FALSE); break;
+    case WM_SETCURSOR: SetCursor(LoadCursor(nullptr,IDC_HAND)); return TRUE;
+    case WM_NCDESTROY: if (d) delete d; RemovePropW(h,L"vkhover"); break;
+    }
+    return DefWindowProcW(h,m,w,l);
+}
+
 // Hotkey recorder (HotkeyRecorder.swift): a rounded gray box; click it, press a combination. The switch hotkey
 // also takes modifiers alone (Ctrl+Shift).
 struct Recorder { const wchar_t* pref; bool recording; int value; };
