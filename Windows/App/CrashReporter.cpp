@@ -1,6 +1,5 @@
 #define _HAS_STD_BYTE 0
 #include "CrashReporter.h"
-#include "Prefs.h"
 #include "resource.h"
 #include <signal.h>
 #include <stdlib.h>
@@ -188,9 +187,22 @@ static void onInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, u
 static void onAbort(int) { fail("abort"); }
 
 void install() {
-    std::wstring d = prefs::appDataDir() + L"\\Crashes";
-    CreateDirectoryW(d.c_str(), nullptr);
-    wcsncpy_s(_dir, d.c_str(), _TRUNCATE);
+    // Store crash logs beside Vikey.exe so the whole app can remain portable.
+    wchar_t exe[MAX_PATH] = {0};
+    DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        wchar_t* slash = wcsrchr(exe, L'\\');
+        wchar_t* forwardSlash = wcsrchr(exe, L'/');
+        if (!slash || (forwardSlash && forwardSlash > slash)) slash = forwardSlash;
+        if (slash) *slash = L'\0';
+        wcsncpy_s(_dir, exe, _TRUNCATE);
+        if (wcslen(_dir) + 8 < MAX_PATH) {
+            wcscat_s(_dir, L"\\Crashes");
+            CreateDirectoryW(_dir, nullptr);
+        } else {
+            _dir[0] = L'\0';
+        }
+    }
     _mainThread = GetCurrentThreadId();
     strncpy_s(_os, windowsVersion().c_str(), _TRUNCATE);
     ULONG guarantee = 64 * 1024; SetThreadStackGuarantee(&guarantee);   // room for the handler after a stack overflow
