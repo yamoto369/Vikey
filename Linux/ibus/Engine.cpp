@@ -12,7 +12,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <unistd.h>
-#include <ctime>
 #include <glob.h>
 #include "Core.h"
 #include "Prefs.h"
@@ -29,7 +28,7 @@
 #endif
 using namespace vikey;
 
-typedef struct { IBusEngine parent; guint caps; gboolean enabled; IBusPropList* props; IBusProperty *pLang, *pAuto, *pOpen, *pLog, *pGuide, *pUpdate, *pAbout; guint64 shown; } VikeyEngine;   // shown: what the panel has (0 = unknown)
+typedef struct { IBusEngine parent; guint caps; gboolean enabled; IBusPropList* props; IBusProperty *pLang, *pAuto, *pOpen, *pLog, *pGuide, *pAbout; guint64 shown; } VikeyEngine;   // shown: what the panel has (0 = unknown)
 typedef struct { IBusEngineClass parent; } VikeyEngineClass;
 static GType vikey_engine_get_type();
 #define VIKEY_TYPE_ENGINE (vikey_engine_get_type())
@@ -194,11 +193,10 @@ static void buildProps(VikeyEngine* e) {
     e->pOpen = ibus_property_new("open", PROP_TYPE_NORMAL, ibus_text_new_from_string("Mở Vikey…"), nullptr, nullptr, TRUE, TRUE, PROP_STATE_UNCHECKED, nullptr);
     e->pLog = ibus_property_new("log", PROP_TYPE_NORMAL, ibus_text_new_from_string("Xem nhật ký gõ…"), nullptr, nullptr, TRUE, TRUE, PROP_STATE_UNCHECKED, nullptr);
     e->pGuide = ibus_property_new("guide", PROP_TYPE_NORMAL, ibus_text_new_from_string("Hướng dẫn…"), nullptr, nullptr, TRUE, TRUE, PROP_STATE_UNCHECKED, nullptr);
-    e->pUpdate = ibus_property_new("update", PROP_TYPE_NORMAL, ibus_text_new_from_string("Kiểm tra cập nhật…"), nullptr, nullptr, TRUE, TRUE, PROP_STATE_UNCHECKED, nullptr);
     e->pAbout = ibus_property_new("about", PROP_TYPE_NORMAL, ibus_text_new_from_string("Giới thiệu Vikey"), nullptr, nullptr, TRUE, TRUE, PROP_STATE_UNCHECKED, nullptr);
     // the Mac menu bar's order; the typing log is a debug item there (Gỡ lỗi), shown only while logging is on
     ibus_property_set_visible(e->pLog, prefs::getInt("TypingLogEnabled", 0) != 0);
-    for (IBusProperty* p : {e->pLang, e->pAuto, e->pOpen, e->pGuide, e->pUpdate, e->pAbout, e->pLog}) { g_object_ref_sink(p); ibus_prop_list_append(e->props, p); }
+    for (IBusProperty* p : {e->pLang, e->pAuto, e->pOpen, e->pGuide, e->pAbout, e->pLog}) { g_object_ref_sink(p); ibus_prop_list_append(e->props, p); }
 }
 static void launchSettings(const char* arg, const char* arg2) {
     gchar* argv[] = {(gchar*)"vikey-settings", (gchar*)arg, (gchar*)arg2, nullptr};
@@ -274,7 +272,6 @@ static void vikey_property_activate(IBusEngine* engine, const gchar* name, guint
     else if (!strcmp(name, "open")) launchSettings("");
     else if (!strcmp(name, "log")) launchSettings("--log");
     else if (!strcmp(name, "guide")) launchSettings("--guide");
-    else if (!strcmp(name, "update")) launchSettings("--check-update");
     else if (!strcmp(name, "about")) launchSettings("--about");
     updateLangProp(e);
 }
@@ -302,19 +299,8 @@ static void readCommand() {
         else core::command(l); }
     fclose(f); unlink(path.c_str()); updateLangProp(_active);
 }
-// Auto update (Tự động cập nhật): once a day ask vikey-settings to compare vikey.app/release.json with this version
-// and show a notification when there is a newer one (the package manager does the install).
-static gboolean onUpdateTick(gpointer) {
-    if (!prefs::getInt("AutoUpdate", 1)) return TRUE;
-    long now = (long)time(nullptr); long last = prefs::getInt("LastUpdateCheck", 0);
-    if (now - last < 86400) return TRUE;
-    prefs::setInt("LastUpdateCheck", (int)now); launchSettings("--check-update", "--quiet"); return TRUE;
-}
 static void onSettingsChanged(GFileMonitor*, GFile* file, GFile*, GFileMonitorEvent ev, gpointer) {
     if (file) { char* b = g_file_get_basename(file); bool isCmd = b && !strcmp(b, "command"); g_free(b); if (isCmd) { if (ev == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || ev == G_FILE_MONITOR_EVENT_MOVED_IN || ev == G_FILE_MONITOR_EVENT_RENAMED || ev == G_FILE_MONITOR_EVENT_CREATED) readCommand(); return; } } if (ev == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || ev == G_FILE_MONITOR_EVENT_MOVED_IN || ev == G_FILE_MONITOR_EVENT_RENAMED || ev == G_FILE_MONITOR_EVENT_CREATED) { if (prefs::changedByOthers()) core::reloadSettings(); updateLangProp(_active); } }
-// After a crash (IBus has started the engine again): vikey-settings sends the report (CrashReportsAuto) or asks
-// first with a notification. Off the key path, a few seconds after start; the settings app marks it handled.
-static gboolean onCrashCheck(gpointer) { if (!crash::pending().empty()) launchSettings("--crash-report"); return G_SOURCE_REMOVE; }
 static gboolean onFlush(gpointer) { core::flushTypingLog(); return TRUE; }
 static void onBusDisconnected(IBusBus*, gpointer) { core::shutdown(); ibus_quit(); }
 
@@ -341,8 +327,6 @@ int main(int argc, char** argv) {
     GFileMonitor* fmon = g_file_monitor_file(sf, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr); if (fmon) g_signal_connect(fmon, "changed", G_CALLBACK(onSettingsChanged), nullptr);
     g_timeout_add(1000, [](gpointer) -> gboolean { core::pollSettingsFile(); readCommand(); return TRUE; }, nullptr);   // belt and braces: mtime poll + command file
     g_timeout_add_seconds(10, onFlush, nullptr);
-    g_timeout_add_seconds(8, onCrashCheck, nullptr);
-    g_timeout_add_seconds(90, [](gpointer) -> gboolean { onUpdateTick(nullptr); g_timeout_add_seconds(3600, onUpdateTick, nullptr); return FALSE; }, nullptr);
     ibus_main();
     core::shutdown();
     return 0;
