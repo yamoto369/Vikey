@@ -235,7 +235,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     for (const wchar_t* k : {L"AutoUpdate", L"LastUpdateCheck", L"AppcastURL", L"PendingUpdatePath", L"PendingUpdateVersion", L"CrashReportsAuto", L"CrashReportsSeenUntil", L"crashEndpoint"}) vikey::prefs::remove(k);
     // Removed features: drop their stored prefs, so a stale picker setting cannot come back.
     for (const wchar_t* k : {L"EmojiPicker", L"EmojiHotkey", L"EmojiSkinTone", L"EmojiUsage"}) vikey::prefs::remove(k);
-    WNDCLASSW wc = {}; wc.lpfnWndProc = wndProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyTray";
+    WNDCLASSW wc = {}; wc.style = CS_DBLCLKS; wc.lpfnWndProc = wndProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyTray";
     RegisterClassW(&wc);
     // hidden top-level, not HWND_MESSAGE: a message-only window gets no broadcasts (TaskbarCreated, WM_SETTINGCHANGE);
     // WS_EX_TOOLWINDOW keeps it out of the taskbar and Alt+Tab
