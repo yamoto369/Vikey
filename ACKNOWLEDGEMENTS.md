@@ -5,8 +5,6 @@ Vikey is built on the code and data below. The app contains only word statistics
 ## Code
 
 - [OpenKey](https://github.com/tuyenvm/OpenKey), Tuyen Mai (GPL-3.0)
-- [Sparkle](https://sparkle-project.org), Sparkle Project (MIT)
-- [TweetNaCl](https://tweetnacl.cr.yp.to), Daniel J. Bernstein et al. (public domain), Windows update signature check
 - [Inno Setup](https://jrsoftware.org/isinfo.php), Jordan Russell, Martijn Laan (Inno Setup License), Windows installer
 
 ## Word data (counted into the app)
