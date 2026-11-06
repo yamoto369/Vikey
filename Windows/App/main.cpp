@@ -26,8 +26,6 @@ static const UINT WM_VIKEY_SETLANG = WM_APP + 2;   // tests: wParam = language (
 static const UINT WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");   // Explorer (re)started: the tray is empty
 static const UINT TIMER_FLUSH = 1;
 static const UINT TIMER_TRAY_DPI = 2;
-static const UINT TIMER_TRAY_CLICK = 3;
-static bool _trayDoubleClick = false;
 enum { ID_LOGTOGGLE = 100, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
 
 static HWND _hwnd; static NOTIFYICONDATAW _nid = {};
@@ -167,16 +165,10 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_TRAY:
         if (LOWORD(lp) == WM_LBUTTONUP) {
-            if (_trayDoubleClick) {
-                _trayDoubleClick = false; // Ignore the button-up following WM_LBUTTONDBLCLK.
-                KillTimer(h, TIMER_TRAY_CLICK);
-            } else {
-                KillTimer(h, TIMER_TRAY_CLICK);
-                SetTimer(h, TIMER_TRAY_CLICK, GetDoubleClickTime() + 50, nullptr);
-            }
+            // Handle every click immediately. A double-click may therefore toggle twice,
+            // returning the input mode to its original state.
+            core::setLanguageByUser(!core::language());
         } else if (LOWORD(lp) == WM_LBUTTONDBLCLK) {
-            KillTimer(h, TIMER_TRAY_CLICK);
-            _trayDoubleClick = true;
             ui::showSettings(GetModuleHandleW(nullptr), false);
         } else if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU) showMenu();
         return 0;
@@ -194,7 +186,6 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (wp == TIMER_FLUSH) core::flushTypingLog();
         else if (wp == TIMER_TRAY_DPI) refreshTrayIcons();
-        else if (wp == TIMER_TRAY_CLICK) { KillTimer(h, TIMER_TRAY_CLICK); core::setLanguageByUser(!core::language()); }
         return 0;
     case WM_SETTINGCHANGE:
     case WM_DISPLAYCHANGE:
