@@ -2,7 +2,6 @@
 // and backtrace/backtrace_symbols_fd, which are made safe by calling backtrace once at install so libgcc is loaded);
 // the path, the header and the time zone offset are prepared at install.
 #include "Crash.h"
-#include "Prefs.h"
 #include <csignal>
 #include <cstdint>
 #include <cstring>
@@ -11,7 +10,6 @@
 #include <algorithm>
 #include <fcntl.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <sys/stat.h>
 #include <execinfo.h>
 namespace vikey { namespace crash {
@@ -82,22 +80,6 @@ void install(const char* version) {
     stack_t ss; memset(&ss, 0, sizeof ss); ss.ss_sp = altstack; ss.ss_size = sizeof altstack; sigaltstack(&ss, nullptr);
     struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_sigaction = onSignal; sa.sa_flags = SA_SIGINFO | SA_ONSTACK; sigemptyset(&sa.sa_mask);
     for (int s : kSignals) sigaction(s, &sa, nullptr);
-}
-
-std::vector<std::string> pending() {
-    std::vector<std::pair<std::string, time_t>> found; std::string d = dir();
-    long seen = prefs::getInt("CrashReportsSeenUntil", 0); long since = std::max(seen, (long)time(nullptr) - 3 * 86400);
-    if (DIR* dp = opendir(d.c_str())) {
-        while (struct dirent* e = readdir(dp)) {
-            std::string n = e->d_name;
-            if (n.rfind("vikey-", 0) != 0 || n.size() < 5 || n.compare(n.size() - 4, 4, ".txt")) continue;
-            struct stat st; std::string p = d + "/" + n;
-            if (stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_mtime > since) found.push_back({p, st.st_mtime});
-        }
-        closedir(dp);
-    }
-    std::sort(found.begin(), found.end(), [](auto& a, auto& b) { return a.second != b.second ? a.second > b.second : a.first > b.first; });
-    std::vector<std::string> out; for (auto& f : found) out.push_back(f.first); return out;
 }
 
 void selfTest(const std::string& kind) {
