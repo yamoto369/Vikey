@@ -284,7 +284,7 @@ static void buildLog(GtkApplication* app) {
 
 // ---- About + Ghi nhận ------------------------------------------------------------------------------------------
 struct Credit { const char *name, *by, *license, *url; };
-// App/Model/Acknowledgements.swift without Sparkle (the Mac's updater; Linux updates come as packages)
+// App/Model/Acknowledgements.swift: code and data credits.
 static const Credit kCode[] = {{"OpenKey", "Tuyen Mai", "GPL-3.0", "https://github.com/tuyenvm/OpenKey"}};
 static const Credit kWordData[] = {
     {"FrequencyWords (OpenSubtitles 2018)", "Hermit Dave", "CC BY-SA 4.0", "https://github.com/hermitdave/FrequencyWords"},
