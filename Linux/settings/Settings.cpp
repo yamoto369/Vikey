@@ -347,7 +347,6 @@ static void buildAbout(GtkApplication* app) {
 }
 
 // ---- entry ------------------------------------------------------------------------------------------------------
-// ---- entry ------------------------------------------------------------------------------------------------------
 
     const char* url = getenv("VIKEY_RELEASE_URL"); if (!url || !*url) url = "https://vikey.app/release.json";   // override for tests
     gchar* argv[] = {(gchar*)"curl", (gchar*)"-fsSL", (gchar*)"--max-time", (gchar*)"15", (gchar*)url, nullptr};
