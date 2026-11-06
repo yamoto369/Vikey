@@ -550,7 +550,7 @@ Neighbors as the main signal made things worse (mixed text puts English nouns ne
 
 **Open with Tony:** how to resolve ties like mix/mĩ (end-of-word dictionary fix for doubled keys, and/or the previous English word as a hint).
 
-## 16. Auto update
+## 16. Auto update (historical; superseded by the offline-only decision below)
 
 **Status:** Done 2026-10-28 (1.0.4).
 
@@ -975,3 +975,8 @@ Word recording can be turned off in the log window. Nothing leaves the Mac; Tony
 **Cause.** macOS disables the event tap when it times out or on user input (a slow Mac, secure input), and the app never turned it back on.
 
 **Fix.** Re-enable the tap when macOS reports it was disabled. A 2-second watchdog also re-enables it if needed.
+
+
+## Offline-only application policy (2026-11-06)
+
+**Current decision; supersedes the former updater and crash-upload decisions above.** Vikey must operate offline and must not initiate network traffic from the application. Remove automatic/manual update checks, updater frameworks and appcast/release polling; remove crash-report prompts, upload clients, and server upload endpoints; remove in-app feedback actions that open the feedback website. Local crash diagnostics may remain, but must never be transmitted. Future upstream merges must be audited for network libraries, endpoints, background timers, update/report UI, and restored call sites before acceptance. This policy applies to every platform and is the source of truth over older historical sections.
