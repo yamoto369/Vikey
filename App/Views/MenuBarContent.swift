@@ -51,12 +51,3 @@ struct DebugMenu: View {
         }
     }
 }
-
-/// vikey.app/feedback with the platform and version, so a report says where it came from.
-enum Feedback {
-    static var url: URL {
-        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
-        return URL(string: "https://vikey.app/feedback?platform=macos&v=\(v)")!
-    }
-    static func open() { NSWorkspace.shared.open(url) }
-}
