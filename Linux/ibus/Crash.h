@@ -1,6 +1,6 @@
 // Crash reports on Linux (the Mac's CrashReporter.swift). The engine writes a small text report when it crashes
 // (signal, fault address, backtrace as module+offset, version: never typed text), IBus starts it again, and on that
-// start the engine asks vikey-settings --crash-report to send it (CrashReportsAuto) or to ask the user first.
+// Vikey keeps this diagnostic log locally only; it is never uploaded or shown in a send-report prompt.
 #pragma once
 #include <string>
 #include <vector>
