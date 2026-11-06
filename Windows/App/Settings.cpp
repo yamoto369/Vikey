@@ -1002,7 +1002,7 @@ static void afterHotkeyChange() {
     if (_onbWin && _step != S_PRACTICE) PostMessageW(_onbWin, WM_REBUILD, 0, 0); else if (_onbWin) InvalidateRect(_onbWin, nullptr, FALSE);
 }
 
-// ---- acknowledgements (AcknowledgementsView.swift; App/Model/Acknowledgements.swift minus Sparkle) ----------------
+// ---- acknowledgements (AcknowledgementsView.swift; shared code and data credits) --------------------------------
 struct Credit { const wchar_t* name; const wchar_t* by; const wchar_t* license; const wchar_t* url; };
 static const Credit ACK_CODE[] = {
     {L"OpenKey", L"Tuyen Mai", L"GPL-3.0", L"https://github.com/tuyenvm/OpenKey"},
