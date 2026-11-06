@@ -26,7 +26,7 @@ static const UINT WM_VIKEY_SETLANG = WM_APP + 2;   // tests: wParam = language (
 static const UINT WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");   // Explorer (re)started: the tray is empty
 static const UINT TIMER_FLUSH = 1;
 static const UINT TIMER_TRAY_DPI = 2;
-enum { ID_VIET = 100, ID_ENG, ID_AUTOSWITCH, ID_LOGTOGGLE, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
+enum { ID_VIET = 100, ID_ENG, ID_AUTOSWITCH, ID_AUTOSWITCH_MODE, ID_LOGTOGGLE, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
 
 static HWND _hwnd; static NOTIFYICONDATAW _nid = {};
 static HICON _iconV, _iconE;
@@ -142,7 +142,10 @@ static void showMenu() {
     using namespace vikey;
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING | (core::language() ? MF_CHECKED : 0), ID_VIET, (L"Tiếng Việt\t" + hotkeyLabel()).c_str());
-    AppendMenuW(m, MF_STRING | (prefs::getInt(L"AutoSwitchByTyping", 1) ? MF_CHECKED : 0), ID_AUTOSWITCH, L"Tự chuyển Anh/Việt");
+    HMENU autoSwitch = CreatePopupMenu();
+    AppendMenuW(autoSwitch, MF_STRING | (prefs::getInt(L"AutoSwitchByTyping", 1) ? MF_CHECKED : 0), ID_AUTOSWITCH, L"Bật tự sửa và nhận diện ngôn ngữ");
+    AppendMenuW(autoSwitch, MF_STRING | (prefs::getInt(L"AutoSwitchModeByTyping", 1) ? MF_CHECKED : 0), ID_AUTOSWITCH_MODE, L"Tự động chuyển mode");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)autoSwitch, L"Tự chuyển Anh/Việt");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_GUIDE, L"Hướng dẫn…");
     AppendMenuW(m, MF_STRING, ID_ABOUT, L"Giới thiệu Vikey");
@@ -174,6 +177,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         switch (LOWORD(wp)) {
         case ID_VIET: core::setLanguageByUser(!core::language()); break;
         case ID_AUTOSWITCH: toggle(L"AutoSwitchByTyping", 1); break;
+        case ID_AUTOSWITCH_MODE: toggle(L"AutoSwitchModeByTyping", 1); break;
         case ID_ABOUT: ui::showAbout(GetModuleHandleW(nullptr)); break;
         case ID_GUIDE: ui::showOnboarding(GetModuleHandleW(nullptr)); break;
         case ID_LOGTOGGLE: toggle(L"TypingLogEnabled", 0); break;
