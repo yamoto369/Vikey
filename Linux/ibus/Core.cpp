@@ -38,7 +38,7 @@ static AutoFixUndo _autoFixUndo = {};
 static Uint32 _undoneKeys[MAX_BUFF]; static int _undoneCount = 0;
 static int vEmojiHotkey = 0;   // the emoji picker's hotkey (0 = off)
 static void StartEnglishWord(bool valid) { _enCount = 0; _enValid = valid; _enAfterShortcut = false; }
-static void ResetEnglishWord(bool valid) { _enAfterDouble = false; _undoneCount = 0; StartEnglishWord(valid); _enPrevN = 0; vAutoSwitchForget(); }
+static void ResetEnglishWord(bool valid) { _enAfterDouble = false; _undoneCount = 0; StartEnglishWord(valid); _enPrevN = 0; _enNavOffset = 0; vAutoSwitchForget(); }   // also the D51 round trip: after a click or a switch → must not bring the old word back
 
 // ---- Typing log --------------------------------------------------------------------------------
 int vTypingLogKeys = 1, vTypingLogEnabled = 0;

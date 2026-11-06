@@ -61,7 +61,7 @@ static void backspace(int n) { for (int i = 0; i < n; i++) { key(KEY_DELETE, fal
 /** Mac app on a click: VikeyCore's mouse-down (a new session; English mode forgets its word). */
 static void click() {
     if (vLanguage == 1) vKeyHandleEvent(vKeyEvent::Mouse, vKeyEventState::MouseDown, 0);
-    else { P.enCount = 0; P.enValid = true; P.prevN = 0; P.enAfterDouble = false; vAutoSwitchForget(); }
+    else { P.enCount = 0; P.enValid = true; P.prevN = 0; P.enAfterDouble = false; P.navOffset = 0; vAutoSwitchForget(); }
     guardPos = P.screen.size();
 }
 static void arrow(bool left) {

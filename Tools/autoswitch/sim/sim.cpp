@@ -181,7 +181,7 @@ static void press(Uint16 key, bool shift) {
 
 static void hotkey() {                        // switchLanguage(): a plain switch (undo is Backspace)
     P.undoActive = false;
-    P.enCount = 0; P.enValid = true; P.prevN = 0; P.enAfterDouble = false; vAutoSwitchForget(); P.runCount = 0;
+    P.enCount = 0; P.enValid = true; P.prevN = 0; P.enAfterDouble = false; P.navOffset = 0; vAutoSwitchForget(); P.runCount = 0;
     vLanguage = vLanguage ? 0 : 1;
     startNewSession();
 }

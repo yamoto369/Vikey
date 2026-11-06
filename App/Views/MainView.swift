@@ -24,6 +24,30 @@ struct MainView: View {
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
+        // taller than the screen (a long list of excluded apps): the window stops at its edge (HostedWindow) and this scrolls (#51)
+        ViewThatFits(in: .vertical) {
+            page
+            ScrollView { page }
+        }
+        .onPreferenceChange(ContentHeightPreferenceKey.self) { newHeight in
+            guard newHeight > 0, abs(newHeight - lastContentHeight) > 1 else { return }
+            lastContentHeight = newHeight
+            DispatchQueue.main.async {
+                guard abs(newHeight - lastContentHeight) <= 1 else { return }
+                Windows.main.fitToContent(height: newHeight)
+            }
+        }
+        .alert("Vikey chưa được phép đọc địa chỉ trang web", isPresented: $browserDenied) {
+            Button("Mở Cài đặt hệ thống") {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
+            }
+            Button("Để sau", role: .cancel) {}
+        } message: {
+            Text("Vào Quyền riêng tư & Bảo mật › Tự động hoá, bật trình duyệt của bạn dưới Vikey, rồi bật lại tuỳ chọn này.")
+        }
+    }
+
+    private var page: some View {
         VStack(spacing: 0) {
             header
             tabBar
@@ -42,29 +66,13 @@ struct MainView: View {
             .scrollDisabled(true)
             .padding(.bottom, 8)
         }
-        .frame(width: 460)
+        .frame(maxWidth: 460)   // an always-shown scroller (System Settings) takes its width from the page, not past the window's edge
         .fixedSize(horizontal: false, vertical: true)
         .background(
             GeometryReader { geo in
                 Color.clear.preference(key: ContentHeightPreferenceKey.self, value: geo.size.height)
             }
         )
-        .onPreferenceChange(ContentHeightPreferenceKey.self) { newHeight in
-            guard newHeight > 0, abs(newHeight - lastContentHeight) > 1 else { return }
-            lastContentHeight = newHeight
-            DispatchQueue.main.async {
-                guard abs(newHeight - lastContentHeight) <= 1 else { return }
-                Windows.main.fitToContent(height: newHeight)
-            }
-        }
-        .alert("Vikey chưa được phép đọc địa chỉ trang web", isPresented: $browserDenied) {
-            Button("Mở Cài đặt hệ thống") {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
-            }
-            Button("Để sau", role: .cancel) {}
-        } message: {
-            Text("Vào Quyền riêng tư & Bảo mật › Tự động hoá, bật trình duyệt của bạn dưới Vikey, rồi bật lại tuỳ chọn này.")
-        }
     }
 
     // MARK: tabs

@@ -31,7 +31,8 @@ case "$VER" in   # a Debian revision (1.0.28-2) is the pacman pkgrel
   *)   PKGVER=$VER; PKGREL=1 ;;
 esac
 
-# Arch names for CPACK_DEBIAN_PACKAGE_DEPENDS in Linux/CMakeLists.txt (keep the list in step).
+# Arch names for CPACK_DEBIAN_PACKAGE_DEPENDS in Linux/CMakeLists.txt (keep the list in step), and for the libraries
+# dpkg-shlibdeps adds (CPACK_DEBIAN_PACKAGE_SHLIBDEPS).
 arch_dep() {
   case "$1" in
     ibus)                      echo ibus ;;
@@ -43,6 +44,14 @@ arch_dep() {
     libnotify-bin)             echo libnotify ;;
     fonts-noto-color-emoji)    echo noto-fonts-emoji ;;
     curl)                      echo curl ;;
+    libc6)                     echo glibc ;;
+    libstdc++6|libgcc-s1)      echo gcc-libs ;;
+    libglib2.0-0|libglib2.0-0t64) echo glib2 ;;
+    libibus-1.0-5)             echo ibus ;;
+    libcairo2)                 echo cairo ;;
+    libpango-1.0-0|libpangocairo-1.0-0) echo pango ;;
+    libfontconfig1)            echo fontconfig ;;
+    libx11-6)                  echo libx11 ;;
     *) return 1 ;;
   esac
 }
@@ -62,7 +71,7 @@ dpkg-deb -f "$DEB" Depends | tr ',' '\n' | while IFS= read -r dep; do
       *) echo "make-pacman.sh: unsupported version constraint '$constraint' for $depname" >&2; exit 1 ;;
     esac
     [ -n "${2:-}" ] || { echo "make-pacman.sh: missing version in constraint '$constraint' for $depname" >&2; exit 1; }
-    printf 'depend = %s%s%s\n' "$name" "$op" "$2"
+    printf 'depend = %s%s%s\n' "$name" "$op" "${2%%~*}"   # Debian's 1.5~beta (before 1.5) is 1.5 here
   else
     printf 'depend = %s\n' "$name"
   fi

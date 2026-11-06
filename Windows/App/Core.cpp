@@ -84,7 +84,7 @@ static Uint32 _undoneKeys[MAX_BUFF];
 static int _undoneCount = 0;
 
 static void StartEnglishWord(bool valid) { _enCount = 0; _enValid = valid; _enAfterShortcut = false; }
-static void ResetEnglishWord(bool valid) { _enAfterDouble = false; _undoneCount = 0; StartEnglishWord(valid); _enPrevN = 0; vAutoSwitchForget(); }
+static void ResetEnglishWord(bool valid) { _enAfterDouble = false; _undoneCount = 0; StartEnglishWord(valid); _enPrevN = 0; _enNavOffset = 0; vAutoSwitchForget(); }   // reset cursor-navigation memory when changing context
 
 // ---- Typing log ------------------------------------------------------------------------
 int vTypingLogKeys = 1, vTypingLogEnabled = 0;

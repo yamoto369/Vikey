@@ -123,6 +123,8 @@ If every listed change is intended, accept them with `Tools/autoswitch/check.sh 
 
 **Result.** Cursor round trips needing a retyped word: 28% → under 2%. Goldens unchanged. Rules D51 (3 cases); the harness gets `{` `}` for ← →.
 
+**Later fix.** A click or a language switch while away didn't forget it (the desktops' English-mode copy, and the engine's across ⌥Z), so → brought the old word back at the new spot and the next key rewrote text there ("meeting th ← click → if " gave "meeting thì "). Both forget it now. Goldens unchanged; 5 more D51 rules.
+
 ## 50. Backspace on a toned letter takes all its keys
 
 **Status:** Shipped 2026-10-30.

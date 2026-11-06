@@ -30,6 +30,7 @@ static Uint16 keyOf(char c) {
     return 0xFFFF;
 }
 static bool enAfterDouble = false;
+static int enNavOff = 0;   // D51: ← count away from the English word's end; like _enNavOffset, any other key, click or switch resets it
 static bool isLetter(char c) { return c >= 'a' && c <= 'z'; }
 static char16_t charOf(Uint32 d) { return (d & CHAR_CODE_MASK) ? (char16_t)(d & 0xFFFF) : (char16_t)keyCodeToCharacter(d); }
 
@@ -44,13 +45,14 @@ static void applyOutput(Uint16 key, bool caps) {
 }
 
 static void press(char c) {
+    if (c != '{' && c != '}') enNavOff = 0;
     if (c == '{' || c == '}') {   // ← / →: the cursor moves (the screen model has no cursor: only used for round trips)
         if (vLanguage == 1) vKeyHandleEvent(vKeyEvent::Keyboard, vKeyEventState::KeyDown, c == '{' ? KEY_LEFT : KEY_RIGHT, 0, false);
         else {   // like HandleEnglishKeyForAutoSwitch (D51): a round trip keeps the word
-            static Uint32 nk[MAX_BUFF]; static int nc = 0, np = 0, off = 0; static bool nv = true, nd = false;
-            if (c == '{' && off == 0 && (enCount > 0 || prevN > 0)) { memcpy(nk, enKeys, sizeof(enKeys)); nc = enCount; nv = enValid; nd = enAfterDouble; np = prevN; off = -1;
+            static Uint32 nk[MAX_BUFF]; static int nc = 0, np = 0; static bool nv = true, nd = false;
+            if (c == '{' && enNavOff == 0 && (enCount > 0 || prevN > 0)) { memcpy(nk, enKeys, sizeof(enKeys)); nc = enCount; nv = enValid; nd = enAfterDouble; np = prevN; enNavOff = -1;
                                                                      enCount = 0; enValid = false; prevN = 0; enAfterDouble = false; }
-            else if (off < 0) { if (c == '{') off--; else if (++off == 0) { memcpy(enKeys, nk, sizeof(enKeys)); enCount = nc; enValid = nv; enAfterDouble = nd; prevN = np; } }
+            else if (enNavOff < 0) { if (c == '{') enNavOff--; else if (++enNavOff == 0) { memcpy(enKeys, nk, sizeof(enKeys)); enCount = nc; enValid = nv; enAfterDouble = nd; prevN = np; } }
             else { enCount = 0; enValid = false; prevN = 0; enAfterDouble = false; }
         }
         return;
@@ -139,7 +141,7 @@ int main(int argc, char** argv) {
         while (fgets(buf, sizeof buf, stdin)) {
             char* tab = strchr(buf, '\t'); if (!tab) continue;
             buf[strcspn(buf, "\n")] = 0;
-            screen.clear(); switches = 0; enCount = 0; enValid = true; prevN = 0; enAfterDouble = false; startNewSession(); vAutoSwitchForget();
+            screen.clear(); switches = 0; enCount = 0; enValid = true; prevN = 0; enAfterDouble = false; enNavOff = 0; startNewSession(); vAutoSwitchForget();
             vLanguage = atoi(buf);
             for (char* p = tab + 1; *p; p++) press(*p == '|' ? '\n' : *p);
             printf("%s\t%d\t%d\n", utf8(screen).c_str(), switches, vLanguage);

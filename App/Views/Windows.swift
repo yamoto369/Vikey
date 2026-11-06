@@ -75,8 +75,11 @@ final class HostedWindow<Content: View> {
         guard h > 0, abs(h - w.contentLayoutRect.height) > 1 else { return }
         let content = NSRect(x: 0, y: 0, width: targetWidth, height: h)
         var frame = w.frame
-        let newSize = w.frameRect(forContentRect: content).size
+        var newSize = w.frameRect(forContentRect: content).size
+        let v = (w.screen ?? NSScreen.main)?.visibleFrame
+        if let v { newSize.height = min(newSize.height, v.height) }   // no taller than the screen: the content scrolls (#51)
         frame.origin.y += frame.height - newSize.height
+        if let v { frame.origin.y = max(frame.origin.y, v.minY) }   // grown past the bottom of the screen: move up
         frame.size = newSize
         w.setFrame(frame, display: true, animate: true)
     }
@@ -104,7 +107,8 @@ extension NSWindow {
         let mouse = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
         guard let screen = mouse ?? screen ?? NSScreen.main else { center(); return }
         let v = screen.visibleFrame, f = frame
-        setFrameOrigin(NSPoint(x: (v.midX - f.width / 2).rounded(), y: (v.midY - f.height / 2).rounded()))
+        let h = min(f.height, v.height)   // no taller than the screen (#51)
+        setFrame(NSRect(x: (v.midX - f.width / 2).rounded(), y: (v.midY - h / 2).rounded(), width: f.width, height: h), display: false)
     }
 }
 

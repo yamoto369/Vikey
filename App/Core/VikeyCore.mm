@@ -169,6 +169,7 @@ extern "C" {
         _undoneCount = 0;
         StartEnglishWord(valid);
         _enPrevN = 0;
+        _enNavOffset = 0;   // a click or a switch while away: → must not bring the old word back at the new spot (D51)
         vAutoSwitchForget();
     }
 

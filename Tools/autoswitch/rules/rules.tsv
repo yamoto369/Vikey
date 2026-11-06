@@ -48,6 +48,8 @@ D8.1	0	check mail cos theer 	check mail có thể 	1	look-back the other way: co
 D8.1	0	nos theer 	nó thể 	1	look-back the other way: nos -> nó
 D8.1	0	cors gif 	có gì 	1	look-back: the common Vietnamese phrase wins
 D8.1	1	carm own 	cảm ơn 	1	EN start: carm converts, then own types ơn
+D8.1	1	this tooib makes 	thí tooib makes 	1	look-back stops at a word put back as typed: tooib is not ambiguous, so thí is not next to makes
+D8.1	1	last tooib week 	lát tooib week 	0	same when the later word switches by itself: week must not delete through tooib
 D8.2	1	cais testflight build 	cái testflight build 	0	unknown foreign word (not Vietnamese, not in the English list) restores + English
 D8.2	1	analytics dashboard 	analytics dashboard 	0	unknown foreign word restores
 D8.2	1	getSmartSwitchKeySaveDataFromApp 	getSmartSwitchKeySaveDataFromApp 	0	32 keys, the most the engine keeps: still restores
@@ -114,6 +116,8 @@ D30	1	cachs mix ddoof 	cách mix đồ 	1	"cách mix" (how to mix outfits): Engl
 D33	1	mua 1casi 	mua 1cái 	1	digits after a space start a new word: Telex works on the letters after them
 D33	1	abc1def 	abc1def 	1	digits glued to letters: a code, left alone
 D33	1	sacj 2w 	sạc 2w 	1	a lone w right after a digit is a unit (W), not ư
+D33	1	1#abc #wa 	1abc ưa 	1	a switch is a fresh start: the digit from before it doesn't make the next w a unit (was wa)
+D33	1	1err treen wa 	1err trên ưa 	1	same after auto switches out and back (was wa)
 D34	0	test cos work 	test có work 	0	a word pair that is clearly Vietnamese (10x) beats D22 ("right after an English word, a tie stays English")
 D35	1	vaof office its nhaats 	vào office ít nhất 	1	look-forward: a word put back to English flips to Vietnamese when the next word makes it clear (ít nhất)
 D39	1	ddi DDaf Nawngx 	đi Đà Nẵng 	1	DD is one letter (Đ): a word starting with it has one capital, not an acronym (DDR, DDoS keep two)
@@ -136,6 +140,11 @@ D50	1	toans<n 	toán 	1	a tone on a letter that stays is kept
 D51	1	th{}if 	thì 	1	← then → back inside a word: the engine still knows the word ({ } = ← →)
 D51	1	tru{{}}owcs 	trước 	1	two steps away and back
 D51	0	meeting th{}if 	meeting thì 	1	English mode: the word buffer survives the round trip too, so the space still converts it
+D51	1	tu{##}ows	tuớ	1	a switch while away (# = ⌥Z, here there and back) forgets the kept word: → brings nothing back
+D51	1	tu{#@#}ows	tuớ	1	switch, click in English, switch back: → still brings nothing back
+D51	0	meeting th{@}if 	meeting thif 	0	English mode: a click while away (@) forgets the word buffer, so the space doesn't convert "thif"
+D51	0	meeting th{##}if 	meeting thif 	0	English mode: and so does a switch there and back
+D51	0	meeting th{x<}if 	meeting thif 	0	English mode: so does a key typed while away, even if deleted again
 D52	1	wr -	ử -	1	a hyphen after a space is not part of the word before it (gave "wr wr-")
 D52	1	ab isw	ab iứ	1	the tone moving onto a just-added ư deletes only the letters of the word (the space before it stayed; gave "abiứ")
 D52	1	ab irw	ab iử	1	the same with hỏi
@@ -151,6 +160,9 @@ D53	1	oxy 	oxy 	0	oy only with huyền: oxy stays
 D57	1	vieejt.<nam 	vieetjnam 	1	Backspace over punctuation brings back the word with its keys: nothing typed before is lost
 D57	1	too.<b 	toob 	1	the restored word keeps its letters when the next word restores
 D57	1	vieejt.< nam 	việt nam 	1	Backspace over punctuation, then a space: the word stays
+D57	1	VIEEJT.<NAM 	VIEETJNAM 	1	a Caps Lock word brought back keeps its capitals: the rebuilt vowel and tone keys too (was VIEeTjNAM)
+D57	1	VIEEJT <NAM 	VIEETJNAM 	0	the same over a space (was VIEeTjNAM)
+D57	1	Vieejt.<nam 	Vieetjnam 	1	a capitalised word: only its first letter comes back as a capital
 D57	1	toottoottoottoottoottoottoottoottoot.<x 	tôttoottoottoottoottoottoottoottootx 	1	a word too long for the key list comes back as it was: never replaced by part of its keys
 D56	1	[ 	ơ 	1	Telex (the default style): a lone [ is ơ
 D56	1	] 	ư 	1	Telex: a lone ] is ư

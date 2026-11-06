@@ -112,7 +112,8 @@ class VikeyIME : InputMethodService(), KeyboardView.Listener, EmojiKeyboardView.
         root = FrameLayout(this)
         root.setBackgroundColor(if (isDark) 0xFF2B2B2D.toInt() else 0xFFD1D4DA.toInt())   // the system keyboard's background
         root.setOnApplyWindowInsetsListener { v, insets ->   // keep the keys above the gesture bar
-            val b = if (Build.VERSION.SDK_INT >= 30) insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom else @Suppress("DEPRECATION") insets.systemWindowInsetBottom
+            // gesture nav: the IME's own back/switcher strip comes as captionBar, taller than the navigationBars handle
+            val b = if (Build.VERSION.SDK_INT >= 30) insets.getInsets(android.view.WindowInsets.Type.navigationBars() or android.view.WindowInsets.Type.captionBar()).bottom else @Suppress("DEPRECATION") insets.systemWindowInsetBottom
             v.setPadding(0, 0, 0, b); insets
         }
         keyboard = KeyboardView(this)

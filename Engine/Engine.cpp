@@ -408,7 +408,8 @@ void insertKey(const Uint16& keyCode, const bool& isCaps, const bool& isCheckSpe
  *  ("có" ⌫ o gave "coo", D50). */
 static bool asResyncStates() {   //false: the keys couldn't be rebuilt for the whole word
     static const Uint16 toneKeys[5] = {KEY_S, KEY_F, KEY_R, KEY_X, KEY_J};
-    Uint32 tone = 0; int n = 0, x = 0;
+    Uint32 tone = 0, up = _index > 1 ? CAPS_MASK : 0; int n = 0, x = 0;   //a lone capital was likely Shift: "Oof" stays "Oof"
+    for (int y = 0; y < _index; y++) up &= TypingWord[y];   //an all-caps word (Caps Lock): its vowel and tone keys were capitals too ("VIEEJT" gave "VIEeTj")
     for (; x < _index && n < MAX_BUFF - 3; x++) {
         Uint32 c = TypingWord[x];
         if (c & CHAR_CODE_MASK) return false;              //a character the keys can't rebuild: leave the list alone
@@ -416,14 +417,14 @@ static bool asResyncStates() {   //false: the keys couldn't be rebuilt for the w
         if ((c & STANDALONE_MASK) && (c & TONEW_MASK)) { KeyStates[n++] = KEY_W | caps; }
         else {
             KeyStates[n++] = CHR(x) | caps;
-            if (c & TONE_MASK) KeyStates[n++] = CHR(x);     //â ê ô đ: the letter twice
-            if (c & TONEW_MASK) KeyStates[n++] = KEY_W;     //ă ơ ư
+            if (c & TONE_MASK) KeyStates[n++] = CHR(x) | up;     //â ê ô đ: the letter twice
+            if (c & TONEW_MASK) KeyStates[n++] = KEY_W | up;     //ă ơ ư
         }
         if (c & MARK_MASK) tone = c & MARK_MASK;
     }
     if (tone) {
         int m = tone == MARK1_MASK ? 0 : tone == MARK2_MASK ? 1 : tone == MARK3_MASK ? 2 : tone == MARK4_MASK ? 3 : 4;
-        KeyStates[n++] = toneKeys[m];
+        KeyStates[n++] = toneKeys[m] | up;
     }
     _stateIndex = n;
     _asDropN = 0;
@@ -1318,10 +1319,13 @@ struct AsWord {
 static AsWord _asPrev[AS_LOOKBACK_WORDS];
 static int _asPrevCount = 0;
 static Uint32 _asConverted[MAX_BUFF]; static int _asConvertedN = 0;   //the word auto switch just put in Vietnamese
+static void navForget();
 
 void vAutoSwitchForget() {
+    navForget();   //and the word kept for a ← → round trip (D51): after a switch or a click → would bring it back elsewhere
     _asPrevCount = 0;
     _asWordStartOk = true;   //a fresh context (language switched, app changed): the next word stands on its own
+    _afterDigit = false;     //not after a digit either: the one before the switch may be far back ("1" ⌥Z "abc " ⌥Z "wa" gave "wa", D33)
     _spaceCount = 0; _specialChar.clear(); _typingStates.clear();   //and Backspace can't reopen a word from before it
     if (_asConvertedN > 0) {   //except the word auto switch just turned Vietnamese: it is on screen before the break key,
         //so Backspace over that key reopens it like a word typed in Vietnamese ("treen " ⌫ + s -> "trến")
@@ -2166,8 +2170,9 @@ void vKeyHandleEvent(const vKeyEvent& event,
             hCode = vDoNothing;
             _spaceCount++;
         }
-        //look-back memory: only words separated by a single space count
-        if (hCode == vDoNothing && _spaceCount == 1) asRememberWord(); else if (_spaceCount > 1) _asPrevCount = 0;
+        //look-back memory: only words separated by a single space count. A word put back as typed ("tooib") isn't
+        //remembered, so it ends the history: else look-back takes the word before it as adjacent ("thí tothis makes")
+        if (hCode == vDoNothing && _spaceCount == 1) asRememberWord(); else _asPrevCount = 0;
         //save word
         if (_spaceCount == 1) {
             if (_specialChar.size() > 0) {

@@ -69,7 +69,7 @@ static void showPre() {
 static void commitRaw(const std::u32string& t) { if (_active && !t.empty()) ibus_engine_commit_text(IBUS_ENGINE(_active), ibus_text_new_from_string(utf8(t).c_str())); }
 static void flushPre() {
     if (_pre.empty()) return;
-    std::u32string t = _pre; _pre.clear(); showPre(); commitRaw(t);
+    std::u32string t = _pre; _pre.clear(); commitRaw(t); showPre();   // commit, then clear: IBus Wayland sends each as its own update, and Chromium keeps a pre-edit cleared before the commit, so the text came twice (#35)
 }
 static void trimPre() {   // commit all but the last two words and the current one
     int seps = 0; size_t cut = std::u32string::npos;
