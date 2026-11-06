@@ -479,7 +479,7 @@ static HWND makeRecorder(HWND parent, const wchar_t* pref, int value, int x, int
 static void destroyChildren(HWND h) { std::vector<HWND> kids; for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) kids.push_back(c); for (HWND c : kids) DestroyWindow(c); }
 
 // ---- main window -----------------------------------------------------------------------------
-enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_SHOWWINDOW, C_LOGKEYS, C_STYLE, C_BLACKLIST,
+enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_AUTO_MODE, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_SHOWWINDOW, C_LOGKEYS, C_STYLE, C_BLACKLIST,
        L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520,
        C_NAV_GENERAL = 600, C_NAV_TYPING, C_NAV_ADVANCED };
 static const UINT WM_REBUILD = WM_APP + 20;
@@ -518,6 +518,7 @@ static HWND recorderRow(const wchar_t* label, const wchar_t* tip, const wchar_t*
 }
 
 static void refreshEnabled() {
+    EnableWindow(_ctl[C_AUTO_MODE], toggleOn(_ctl[C_AUTO]));
     EnableWindow(_ctl[C_PAUSE], toggleOn(_ctl[C_AUTO]));
     EnableWindow(_ctl[C_SITE], toggleOn(_ctl[C_SMART]));
     EnableWindow(_ctl[C_RESTORE], toggleOn(_ctl[C_SPELL]));
@@ -553,7 +554,7 @@ static void paintMain(HWND h) {
 struct GroupLayout { const wchar_t* title; int itemCount; };
 struct PageLayout { const GroupLayout* groups; size_t groupCount; };
 static constexpr GroupLayout GENERAL_GROUPS[] = {
-    {L"Chuyển đổi", 2}, {L"Tự động", 2},
+    {L"Chuyển đổi", 2}, {L"Tự động", 3},
 };
 static constexpr GroupLayout TYPING_GROUPS[] = {
     {L"Kiểu gõ", 2}, {L"Kiểm tra", 2},
@@ -603,7 +604,8 @@ static void buildMain() {
         toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt.", C_BEEP, HAS_BEEP(currentHotkey()) != 0);
         endGroup();
         beginGroup(settingsGroup(0, 1).title);
-        toggleRow(L"Tự chuyển Anh/Việt", L"Tự nhận biết và chuyển chế độ khi bạn bắt đầu gõ ngôn ngữ còn lại.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
+        toggleRow(L"Tự chuyển Anh/Việt", L"Tự nhận biết ngôn ngữ và sửa từ khi bạn bắt đầu gõ ngôn ngữ còn lại.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
+        toggleRow(L"Tự động chuyển mode", L"Tự chuyển mode Tiếng Việt / English theo ngôn ngữ vừa nhận diện. Tắt mục này vẫn sửa từ nhưng giữ nguyên mode hiện tại.", C_AUTO_MODE, prefs::getInt(L"AutoSwitchModeByTyping", 1) != 0);
         toggleRow(L"Tạm dừng 5 giây", L"Khi bạn tự bấm chuyển Anh/Việt, Vikey tạm dừng tự chuyển trong 5 giây.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
         endGroup();
     } else if (_settingsPage == 1) {
@@ -665,6 +667,7 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case C_HOTKEY: setHint(); break;
         case C_BEEP: { int hk = (currentHotkey() & ~0x8000) | (toggleOn(c) ? 0x8000 : 0); prefs::setInt(L"SwitchKeyStatus", hk); if (Recorder* r = rec(_ctl[C_HOTKEY])) r->value = hk; core::reloadSettings(); afterHotkeyChange(); break; }
         case C_AUTO: flag(L"AutoSwitchByTyping"); break;
+        case C_AUTO_MODE: flag(L"AutoSwitchModeByTyping"); break;
         case C_PAUSE: flag(L"PauseAutoAfterManual"); break;
         case C_SMART: flag(L"UseSmartSwitchKey"); break;
         case C_SITE: flag(L"SmartSwitchPerSite"); break;
