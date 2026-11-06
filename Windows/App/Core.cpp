@@ -18,7 +18,7 @@
 // Settings the engine reads (see Engine.h). Same defaults as the macOS app.
 int vLanguage = 1, vSwitchKeyStatus = 0x7A000206, vCheckSpelling = 1, vUseModernOrthography = 1;
 int vRestoreIfWrongSpelling = 1, vFixRecommendBrowser = 1, vUseSmartSwitchKey = 1, vOtherLanguage = 1;
-int vAutoSwitchByTyping = 1, vPerformLayoutCompat = 0;
+int vAutoSwitchByTyping = 1, vAutoSwitchModeByTyping = 1, vPerformLayoutCompat = 0;
 
 namespace vikey { namespace core {
 
@@ -303,6 +303,7 @@ void reloadSettings() {
     vTelexStyle = prefs::getInt(L"TelexStyle", 0);   // D56: Telex / Simple Telex 1 / 2
     vUseSmartSwitchKey = prefs::getInt(L"UseSmartSwitchKey", 1);
     vAutoSwitchByTyping = AutoSwitchPaused() ? 0 : prefs::getInt(L"AutoSwitchByTyping", 1);
+    vAutoSwitchModeByTyping = prefs::getInt(L"AutoSwitchModeByTyping", 1);
     vTypingLogKeys = prefs::getInt(L"TypingLogKeys", 1);
     vTypingLogEnabled = prefs::getInt(L"TypingLogEnabled", 0);
     int hotkey = prefs::getInt(L"SwitchKeyStatus", 0);
@@ -440,10 +441,20 @@ static void AutoSwitchTo(int language, const char* rule) {
     if (vLanguage == language) return;
     TLAuto(rule, language); vLanguage = language; VKLanguageChanged(true); startNewSession(); vAutoSwitchForget();
 }
+/// Apply the detected language correction, but optionally leave the user's current input mode unchanged.
+static void ApplyDetectedLanguage(int language, const char* rule) {
+    if (vAutoSwitchModeByTyping) {
+        AutoSwitchTo(language, rule);
+    } else {
+        TLAuto(rule, language);
+        startNewSession();
+        vAutoSwitchForget();
+    }
+}
 static void ApplyAutoSwitchToEnglish(int correctedCount, bool atWordBreak) {
     vAutoSwitchRequest = -1;
     if (atWordBreak) RememberAutoFix(correctedCount); else _autoFixUndo.active = false;
-    AutoSwitchTo(0, atWordBreak ? "vi_word_to_en" : "double_key");
+    ApplyDetectedLanguage(0, atWordBreak ? "vi_word_to_en" : "double_key");
     ResetEnglishWord(atWordBreak && IsWhitespaceKey(_keycode));   // mid-word: the rest of this word is not a whole word
     // D35: the word just put back to English is the previous word for look-back ("em is" + "ạ" -> "em í ạ")
     if (atWordBreak && _keycode == KEY_SPACE && vAutoSwitchRestoredCount > 0) {
@@ -510,7 +521,7 @@ static bool HandleEnglishKeyForAutoSwitch() {
         memcpy(_enPrevKeys[0], _enKeys, count * sizeof(Uint32)); _enPrevCounts[0] = count; if (_enPrevN < 2) _enPrevN++;
     } else _enPrevN = 0;
     if (!converted) return false;
-    int correctedCount = pData->newCharCount; SendEngineOutput(); RememberAutoFix(correctedCount); AutoSwitchTo(1, "en_word_to_vi");
+    int correctedCount = pData->newCharCount; SendEngineOutput(); RememberAutoFix(correctedCount); ApplyDetectedLanguage(1, "en_word_to_vi");
     return true;
 }
 
