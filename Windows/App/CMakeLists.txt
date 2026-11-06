@@ -22,3 +22,8 @@ add_executable(vikey_livetest ../Tests/livetest.cpp Prefs.cpp)
 target_include_directories(vikey_livetest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vikey_livetest PRIVATE vikey_engine user32 advapi32 shell32)
 target_compile_definitions(vikey_livetest PRIVATE UNICODE _UNICODE)
+# Pure unit test for Windows virtual-key -> shared-engine key mapping; no desktop or hooks required.
+add_executable(vikey_keymap_test ../Tests/keymap_test.cpp)
+target_include_directories(vikey_keymap_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vikey_keymap_test PRIVATE vikey_engine)
+target_compile_definitions(vikey_keymap_test PRIVATE UNICODE _UNICODE)
