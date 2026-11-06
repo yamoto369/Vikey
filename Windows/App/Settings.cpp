@@ -481,7 +481,7 @@ static void destroyChildren(HWND h) { std::vector<HWND> kids; for (HWND c = GetW
 // ---- main window -----------------------------------------------------------------------------
 enum { C_SEG = 200, C_HOTKEY, C_BEEP, C_AUTO, C_AUTO_MODE, C_PAUSE, C_SMART, C_SITE, C_MARK, C_SPELL, C_RESTORE, C_LOGIN, C_SHOWWINDOW, C_LOGKEYS, C_STYLE, C_BLACKLIST,
        L_REFRESH = 300, L_OPEN, L_CLEAR, A_LINK = 400, O_BACK = 500, O_NEXT, O_REC, O_BEEP, O_EDIT = 520,
-       C_NAV_GENERAL = 600, C_NAV_TYPING, C_NAV_ADVANCED };
+       C_NAV_GENERAL = 600, C_NAV_ADVANCED, C_NAV_SYSTEM };
 static const UINT WM_REBUILD = WM_APP + 20;
 static HWND _win, _seg, _hint, _logWin, _logList, _logSummary, _logGrid, _aboutWin, _onbWin, _ackWin, _tooltip;
 static int _settingsPage = 0;
@@ -541,11 +541,11 @@ static void paintMain(HWND h) {
     SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
     RECT navCaption = {24, 68, 180, 92}; DrawTextW(dc, L"CÀI ĐẶT", -1, &navCaption, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, fTitle2); SetTextColor(dc, TEXT);
-    const wchar_t* pageTitle = _settingsPage == 0 ? L"Tổng quan" : (_settingsPage == 1 ? L"Gõ tiếng Việt" : L"Nâng cao");
+    const wchar_t* pageTitle = _settingsPage == 0 ? L"Tổng quan" : (_settingsPage == 1 ? L"Tùy chọn nâng cao" : L"Cài đặt hệ thống");
     RECT titleRect = {CONTENT_X + 18, 22, W - MARGIN - 18 - 164 - 16, 54}; DrawTextW(dc, pageTitle, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, fSmall); SetTextColor(dc, SECONDARY);
-    const wchar_t* subtitle = _settingsPage == 0 ? L"Thiết lập cách chuyển đổi và hành vi nhập liệu." :
-        (_settingsPage == 1 ? L"Tùy chỉnh kiểu gõ và quy tắc tiếng Việt." : L"Quản lý ghi nhớ, khởi động và ứng dụng ngoại lệ.");
+    const wchar_t* subtitle = _settingsPage == 0 ? L"Thiết lập kiểu gõ và quy tắc tiếng Việt." :
+        (_settingsPage == 1 ? L"Tùy chỉnh cách tự động chuyển và ghi nhớ chế độ gõ." : L"Quản lý khởi động và âm thanh.");
     RECT subRect = {CONTENT_X + 19, 54, W - MARGIN - 18 - 164 - 16, 76}; DrawTextW(dc, subtitle, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     EndPaint(h, &ps);
 }
@@ -554,18 +554,18 @@ static void paintMain(HWND h) {
 struct GroupLayout { const wchar_t* title; int itemCount; };
 struct PageLayout { const GroupLayout* groups; size_t groupCount; };
 static constexpr GroupLayout GENERAL_GROUPS[] = {
-    {L"Chuyển đổi", 2}, {L"Tự động", 3},
-};
-static constexpr GroupLayout TYPING_GROUPS[] = {
-    {L"Kiểu gõ", 2}, {L"Kiểm tra", 2},
+    {L"Việt ↔ Anh", 1}, {L"Kiểu gõ", 2}, {L"Kiểm tra", 2},
 };
 static constexpr GroupLayout ADVANCED_GROUPS[] = {
-    {L"Ghi nhớ", 2}, {L"Hệ thống", 3},
+    {L"Tự động chuyển", 3}, {L"Ghi nhớ chế độ gõ", 3},
+};
+static constexpr GroupLayout SYSTEM_GROUPS[] = {
+    {L"Hệ thống", 2}, {L"Âm thanh", 1},
 };
 static constexpr PageLayout SETTINGS_PAGES[] = {
     {GENERAL_GROUPS, std::size(GENERAL_GROUPS)},
-    {TYPING_GROUPS, std::size(TYPING_GROUPS)},
     {ADVANCED_GROUPS, std::size(ADVANCED_GROUPS)},
+    {SYSTEM_GROUPS, std::size(SYSTEM_GROUPS)},
 };
 
 static int settingsPageContentBottom(const PageLayout& page) {
@@ -591,8 +591,8 @@ static void buildMain() {
         setBg(b, GROUP);
     };
     nav(L"Tổng quan", C_NAV_GENERAL, 0, 104);
-    nav(L"Gõ tiếng Việt", C_NAV_TYPING, 1, 152);
-    nav(L"Nâng cao", C_NAV_ADVANCED, 2, 200);
+    nav(L"Nâng cao", C_NAV_ADVANCED, 1, 152);
+    nav(L"Hệ thống", C_NAV_SYSTEM, 2, 200);
 
     _hint = child(L"STATIC", L"", SS_LEFT, 0, 0, 1, 1, 0, fSmall);
     _seg = child(L"VikeySegmented", L"", 0, W - MARGIN - 18 - 164, 24, 164, 32, C_SEG);
@@ -600,39 +600,41 @@ static void buildMain() {
     _y = 92;
     if (_settingsPage == 0) {
         beginGroup(settingsGroup(0, 0).title);
-        recorderRow(L"Phím chuyển Anh/Việt", L"Bấm tổ hợp phím này để chuyển giữa tiếng Việt và tiếng Anh. Bấm vào ô để đặt phím khác.", L"SwitchKeyStatus", currentHotkey(), C_HOTKEY);
-        toggleRow(L"Âm báo khi chuyển", L"Phát một âm ngắn mỗi lần bạn bấm phím chuyển Anh/Việt.", C_BEEP, HAS_BEEP(currentHotkey()) != 0);
+        recorderRow(L"Phím tắt", nullptr, L"SwitchKeyStatus", currentHotkey(), C_HOTKEY);
         endGroup();
         beginGroup(settingsGroup(0, 1).title);
-        toggleRow(L"Tự chuyển Anh/Việt", L"Tự nhận biết ngôn ngữ và sửa từ khi bạn bắt đầu gõ ngôn ngữ còn lại.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
-        toggleRow(L"Tự động chuyển mode", L"Tự chuyển mode Tiếng Việt / English theo ngôn ngữ vừa nhận diện. Tắt mục này vẫn sửa từ nhưng giữ nguyên mode hiện tại.", C_AUTO_MODE, prefs::getInt(L"AutoSwitchModeByTyping", 1) != 0);
-        toggleRow(L"Tạm dừng 5 giây", L"Khi bạn tự bấm chuyển Anh/Việt, Vikey tạm dừng tự chuyển trong 5 giây.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
-        endGroup();
-    } else if (_settingsPage == 1) {
-        beginGroup(settingsGroup(1, 0).title);
-        HWND style = row(L"Kiểu gõ", L"Chọn biến thể Telex phù hợp với thói quen của bạn.", L"VikeyCombo", C_STYLE, 210, 36, WS_TABSTOP);
+        HWND style = row(L"Kiểu gõ", nullptr, L"VikeyCombo", C_STYLE, 210, 36, WS_TABSTOP);
         for (const wchar_t* t : {L"Telex", L"Telex đơn giản 1", L"Telex đơn giản 2"}) SendMessageW(style, CB_ADDSTRING, 0, (LPARAM)t);
         SendMessageW(style, CB_SETCURSEL, std::min(2, std::max(0, prefs::getInt(L"TelexStyle", 0))), 0);
         SetWindowPos(style, nullptr, W - MARGIN - 18 - 210, _y - ROW + 2, 210, 36, SWP_NOZORDER);
-        HWND mark = row(L"Đặt dấu", L"Chọn vị trí dấu thanh cho các tổ hợp oa, oe và uy.", L"VikeyCombo", C_MARK, 180, 36, WS_TABSTOP);
-        SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy");
+        HWND mark = row(L"Đặt dấu", nullptr, L"VikeyCombo", C_MARK, 180, 36, WS_TABSTOP);
+        SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hòa, thúy"); SendMessageW(mark, CB_ADDSTRING, 0, (LPARAM)L"hoà, thuý");
         SendMessageW(mark, CB_SETCURSEL, prefs::getInt(L"ModernOrthography", 1) ? 0 : 1, 0);
         SetWindowPos(mark, nullptr, W - MARGIN - 18 - 180, _y - ROW + 2, 180, 36, SWP_NOZORDER);
         endGroup();
-        beginGroup(settingsGroup(1, 1).title);
+        beginGroup(settingsGroup(0, 2).title);
         toggleRow(L"Kiểm tra chính tả", L"Chỉ bỏ dấu khi từ đang gõ đúng quy tắc chính tả tiếng Việt.", C_SPELL, prefs::getInt(L"Spelling", 1) != 0);
         toggleRow(L"Trả lại phím khi sai", L"Khi từ sai chính tả, Vikey trả lại đúng các phím bạn đã gõ.", C_RESTORE, prefs::getInt(L"RestoreIfInvalidWord", 1) != 0);
         endGroup();
-    } else {
-        beginGroup(settingsGroup(2, 0).title);
-        toggleRow(L"Nhớ theo ứng dụng", L"Nhớ chế độ tiếng Anh hoặc tiếng Việt riêng cho từng ứng dụng.", C_SMART, prefs::getInt(L"UseSmartSwitchKey", 1) != 0);
-        toggleRow(L"Nhớ theo trang web", L"Nhớ chế độ nhập liệu cho từng trang web trong trình duyệt được hỗ trợ.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
+    } else if (_settingsPage == 1) {
+        beginGroup(settingsGroup(1, 0).title);
+        toggleRow(L"Tự sửa từ Anh/Việt", L"Tự nhận diện ngôn ngữ và sửa từ tương ứng.", C_AUTO, prefs::getInt(L"AutoSwitchByTyping", 1) != 0);
+        toggleRow(L"Tự động chuyển mode", L"Tự chuyển chế độ gõ theo ngôn ngữ vừa nhận diện. Tắt mục này vẫn sửa từ nhưng giữ nguyên mode hiện tại.", C_AUTO_MODE, prefs::getInt(L"AutoSwitchModeByTyping", 1) != 0);
+        toggleRow(L"Tạm dừng 5 giây", L"Tạm dừng tự sửa trong 5 giây khi tự bấm chuyển Anh ↔ Việt.", C_PAUSE, prefs::getInt(L"PauseAutoAfterManual", 1) != 0);
         endGroup();
-        beginGroup(settingsGroup(2, 1).title);
-        toggleRow(L"Mở Vikey khi đăng nhập", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
-        toggleRow(L"Mở cửa sổ khi khởi động", L"Tự động hiển thị cửa sổ Vikey mỗi khi ứng dụng được mở.", C_SHOWWINDOW, prefs::getInt(L"ShowWindowAtStartup", 1) != 0);
+        beginGroup(settingsGroup(1, 1).title);
+        toggleRow(L"Theo ứng dụng", L"Nhớ chế độ tiếng Anh hoặc tiếng Việt riêng cho từng ứng dụng.", C_SMART, prefs::getInt(L"UseSmartSwitchKey", 1) != 0);
+        toggleRow(L"Theo trang web", L"Nhớ chế độ tiếng Anh hoặc tiếng Việt riêng cho từng trang web trong trình duyệt được hỗ trợ.", C_SITE, prefs::getInt(L"SmartSwitchPerSite", 1) != 0);
         HWND bl = row(L"Ứng dụng ngoại lệ", L"Chọn ứng dụng mà Vikey sẽ không can thiệp khi bạn gõ.", L"VikeyButton", C_BLACKLIST, 132, 32, WS_TABSTOP);
         SetWindowTextW(bl, L"Quản lý…"); setBg(bl, GROUP);
+        endGroup();
+    } else {
+        beginGroup(settingsGroup(2, 0).title);
+        toggleRow(L"Khởi động cùng hệ thống", L"Tự mở Vikey mỗi khi bạn đăng nhập vào Windows.", C_LOGIN, prefs::launchAtLogin());
+        toggleRow(L"Mở cửa sổ khi khởi động", L"Tự động hiển thị cửa sổ Vikey mỗi khi ứng dụng được mở.", C_SHOWWINDOW, prefs::getInt(L"ShowWindowAtStartup", 1) != 0);
+        endGroup();
+        beginGroup(settingsGroup(2, 1).title);
+        toggleRow(L"Âm báo", L"Phát âm thanh khi chuyển Anh ↔ Việt.", C_BEEP, HAS_BEEP(currentHotkey()) != 0);
         endGroup();
     }
     refreshEnabled();
@@ -661,8 +663,8 @@ static LRESULT CALLBACK mainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         auto flag = [&](const wchar_t* pref) { prefs::setInt(pref, toggleOn(c)); core::reloadSettings(); refreshEnabled(); };
         switch (id) {
         case C_NAV_GENERAL: _settingsPage = 0; buildMain(); break;
-        case C_NAV_TYPING: _settingsPage = 1; buildMain(); break;
-        case C_NAV_ADVANCED: _settingsPage = 2; buildMain(); break;
+        case C_NAV_ADVANCED: _settingsPage = 1; buildMain(); break;
+        case C_NAV_SYSTEM: _settingsPage = 2; buildMain(); break;
         case C_SEG: core::setLanguageByUser(GetWindowLongPtrW(_seg, GWLP_USERDATA) == 0 ? 1 : 0); break;
         case C_HOTKEY: setHint(); break;
         case C_BEEP: { int hk = (currentHotkey() & ~0x8000) | (toggleOn(c) ? 0x8000 : 0); prefs::setInt(L"SwitchKeyStatus", hk); if (Recorder* r = rec(_ctl[C_HOTKEY])) r->value = hk; core::reloadSettings(); afterHotkeyChange(); break; }
