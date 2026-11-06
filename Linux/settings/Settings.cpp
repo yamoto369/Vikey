@@ -347,8 +347,6 @@ static void buildAbout(GtkApplication* app) {
 }
 
 // ---- entry ------------------------------------------------------------------------------------------------------
-
-// ---- entry ------------------------------------------------------------------------------------------------------
 static std::string _mode;
 static void onActivate(GtkApplication* app, gpointer) {
     loadCss();
