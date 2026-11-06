@@ -26,7 +26,7 @@ static const UINT WM_VIKEY_SETLANG = WM_APP + 2;   // tests: wParam = language (
 static const UINT WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");   // Explorer (re)started: the tray is empty
 static const UINT TIMER_FLUSH = 1;
 static const UINT TIMER_TRAY_DPI = 2;
-enum { ID_VIET = 100, ID_ENG, ID_AUTOSWITCH, ID_LOGTOGGLE, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
+enum { ID_LOGTOGGLE = 100, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
 
 static HWND _hwnd; static NOTIFYICONDATAW _nid = {};
 static HICON _iconV, _iconE;
@@ -141,9 +141,6 @@ static std::wstring hotkeyLabel() {
 static void showMenu() {
     using namespace vikey;
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING | (core::language() ? MF_CHECKED : 0), ID_VIET, (L"Tiếng Việt\t" + hotkeyLabel()).c_str());
-    AppendMenuW(m, MF_STRING | (prefs::getInt(L"AutoSwitchByTyping", 1) ? MF_CHECKED : 0), ID_AUTOSWITCH, L"Tự chuyển Anh/Việt");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_GUIDE, L"Hướng dẫn…");
     AppendMenuW(m, MF_STRING, ID_ABOUT, L"Giới thiệu Vikey");
     HMENU dbg = CreatePopupMenu();
@@ -167,13 +164,16 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     }   // Explorer restarted: recreate the correctly-sized icon and add it back.
     switch (msg) {
     case WM_TRAY:
-        if (LOWORD(lp) == WM_LBUTTONUP) ui::showSettings(GetModuleHandleW(nullptr), false);
-        else if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU) showMenu();
+        if (LOWORD(lp) == WM_LBUTTONUP) {
+            // Handle every click immediately. A double-click may therefore toggle twice,
+            // returning the input mode to its original state.
+            core::setLanguageByUser(!core::language());
+        } else if (LOWORD(lp) == WM_LBUTTONDBLCLK) {
+            ui::showSettings(GetModuleHandleW(nullptr), false);
+        } else if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU) showMenu();
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
-        case ID_VIET: core::setLanguageByUser(!core::language()); break;
-        case ID_AUTOSWITCH: toggle(L"AutoSwitchByTyping", 1); break;
         case ID_ABOUT: ui::showAbout(GetModuleHandleW(nullptr)); break;
         case ID_GUIDE: ui::showOnboarding(GetModuleHandleW(nullptr)); break;
         case ID_LOGTOGGLE: toggle(L"TypingLogEnabled", 0); break;
@@ -226,7 +226,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     for (const wchar_t* k : {L"AutoUpdate", L"LastUpdateCheck", L"AppcastURL", L"PendingUpdatePath", L"PendingUpdateVersion", L"CrashReportsAuto", L"CrashReportsSeenUntil", L"crashEndpoint"}) vikey::prefs::remove(k);
     // Removed features: drop their stored prefs, so a stale picker setting cannot come back.
     for (const wchar_t* k : {L"EmojiPicker", L"EmojiHotkey", L"EmojiSkinTone", L"EmojiUsage"}) vikey::prefs::remove(k);
-    WNDCLASSW wc = {}; wc.lpfnWndProc = wndProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyTray";
+    WNDCLASSW wc = {}; wc.style = CS_DBLCLKS; wc.lpfnWndProc = wndProc; wc.hInstance = inst; wc.lpszClassName = L"VikeyTray";
     RegisterClassW(&wc);
     // hidden top-level, not HWND_MESSAGE: a message-only window gets no broadcasts (TaskbarCreated, WM_SETTINGCHANGE);
     // WS_EX_TOOLWINDOW keeps it out of the taskbar and Alt+Tab
