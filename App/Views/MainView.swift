@@ -21,7 +21,6 @@ struct MainView: View {
     @State private var browserDenied = false
     @State private var excluded = ExcludedApps.all
     @State private var lastContentHeight: CGFloat = 0
-    @ObservedObject private var updater = Updater.shared
 
     var body: some View {
         // taller than the screen (a long list of excluded apps): the window stops at its edge (HostedWindow) and this scrolls (#51)
@@ -217,14 +216,6 @@ struct MainView: View {
     @ViewBuilder private var generalRows: some View {
                 Toggle(isOn: Binding(get: { launchAtLogin }, set: { LaunchAtLogin.set($0); launchAtLogin = LaunchAtLogin.isEnabled })) {
                     Tip("Mở Vikey khi đăng nhập", "Tự mở Vikey mỗi khi bạn đăng nhập vào máy Mac.")
-                }
-                Toggle(isOn: Binding(get: { updater.automatic }, set: { updater.automatic = $0 })) {
-                    Tip("Tự động cập nhật", "Mỗi ngày Vikey kiểm tra bản mới trên vikey.app, tự tải về và cài khi bạn thoát Vikey hoặc tắt máy.")
-                }
-                LabeledContent {
-                    Button("Gửi góp ý…") { Feedback.open() }
-                } label: {
-                    Tip("Góp ý", "Báo lỗi hoặc góp ý cho Vikey: mở trang vikey.app/feedback trong trình duyệt.")
                 }
     }
 
