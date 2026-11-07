@@ -227,7 +227,7 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
     wchar_t clsid[64] = {};
     StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
     wchar_t keyPath[128] = {};
-    swprintf_s(keyPath, L"CLSID\\%s", clsid);
+    swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s", clsid);
     LONG error = RegDeleteTreeW(HKEY_CLASSES_ROOT, keyPath);
     if (error != ERROR_SUCCESS && error != ERROR_FILE_NOT_FOUND && SUCCEEDED(result))
         result = HRESULT_FROM_WIN32(error);

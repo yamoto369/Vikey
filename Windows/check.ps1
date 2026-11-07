@@ -9,7 +9,7 @@ $env:TMPDIR = $env:TEMP
 Write-Host '== Configure engine test tools =='
 cmake -S "$root/Windows" -B "$root/Windows/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
-cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test vikey_input_policy_test vikey_tsf_policy_test vikey_tsf
+cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test vikey_input_policy_test vikey_tsf_policy_test vikey_tsf vikey_tsf_com_test
 if ($LASTEXITCODE -ne 0) { throw 'Building engine validation tools failed' }
 
 $harness = Join-Path $as 'test/harness.exe'
@@ -26,6 +26,13 @@ Write-Host '== Windows key adapter unit tests =='
 $keymapTest = Join-Path $root 'Windows/build/App/vikey_keymap_test.exe'
 & $keymapTest
 if ($LASTEXITCODE -ne 0) { throw 'Windows key adapter unit tests failed' }
+
+
+Write-Host '== TSF COM DLL lifecycle smoke test =='
+$tsfComTest = Join-Path $root 'Windows/build/App/vikey_tsf_com_test.exe'
+$tsfDll = Join-Path $root 'Windows/build/App/VikeyTsf.dll'
+& $tsfComTest $tsfDll
+if ($LASTEXITCODE -ne 0) { throw 'TSF COM DLL smoke test failed' }
 
 Write-Host '== TSF context eligibility unit tests =='
 $tsfPolicyTest = Join-Path $root 'Windows/build/App/vikey_tsf_policy_test.exe'

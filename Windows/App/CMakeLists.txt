@@ -49,3 +49,9 @@ set_target_properties(vikey_tsf PROPERTIES PREFIX "" OUTPUT_NAME "VikeyTsf")
 
 # Export the standard COM DLL entry points with their undecorated names.
 target_link_options(vikey_tsf PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/TSFTip.def")
+
+# COM ABI/lifetime smoke test loads the built TIP DLL without machine registration.
+add_executable(vikey_tsf_com_test ../Tests/tsf_com_test.cpp)
+target_compile_definitions(vikey_tsf_com_test PRIVATE UNICODE _UNICODE)
+target_link_libraries(vikey_tsf_com_test PRIVATE ole32 uuid)
+add_dependencies(vikey_tsf_com_test vikey_tsf)
