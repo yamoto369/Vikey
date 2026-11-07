@@ -140,21 +140,27 @@ HRESULT registerProfiles() {
     }
 
     if (SUCCEEDED(hr)) {
-        // DONTCARECURRENTINPUTLANGUAGE avoids failing on machines whose current
-        // keyboard layout is not the profile's language. TSF activates it when
-        // English/Vietnamese becomes the current input language.
-        const LANGID currentLanguage = LOWORD((DWORD_PTR)GetKeyboardLayout(0));
-        const LANGID targetLanguage =
-            PRIMARYLANGID(currentLanguage) == LANG_VIETNAMESE
-                ? MAKELANGID(LANG_VIETNAMESE, SUBLANG_DEFAULT)
-                : MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
-        const DWORD flags =
-            TF_IPPMF_FORSESSION | TF_IPPMF_ENABLEPROFILE |
-            TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE;
-        hr = profileManager->ActivateProfile(
-            TF_PROFILETYPE_INPUTPROCESSOR, targetLanguage, CLSID_VikeyTextService,
-            GUID_VikeyProfile, nullptr, flags);
-        logRegistration(SUCCEEDED(hr) ? "activate-profile" : "activate-profile-failed", hr);
+        wchar_t hostTest[2] = {};
+        const DWORD hostTestLength = GetEnvironmentVariableW(
+            L"VIKEY_TSF_HOST_TEST", hostTest, ARRAYSIZE(hostTest));
+        if (hostTestLength == 0) {
+            // Production activation is session-wide; CI test hosts explicitly activate
+            // a COM instance on their own ITfThreadMgr to avoid desktop-profile timing.
+            const LANGID currentLanguage = LOWORD((DWORD_PTR)GetKeyboardLayout(0));
+            const LANGID targetLanguage =
+                PRIMARYLANGID(currentLanguage) == LANG_VIETNAMESE
+                    ? MAKELANGID(LANG_VIETNAMESE, SUBLANG_DEFAULT)
+                    : MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
+            const DWORD flags =
+                TF_IPPMF_FORSESSION | TF_IPPMF_ENABLEPROFILE |
+                TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE;
+            hr = profileManager->ActivateProfile(
+                TF_PROFILETYPE_INPUTPROCESSOR, targetLanguage, CLSID_VikeyTextService,
+                GUID_VikeyProfile, nullptr, flags);
+            logRegistration(SUCCEEDED(hr) ? "activate-profile" : "activate-profile-failed", hr);
+        } else {
+            logRegistration("test-host-registration-only", S_OK);
+        }
     }
 
     profileManager->Release();

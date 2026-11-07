@@ -1,5 +1,7 @@
 #include <windows.h>
 #include <richedit.h>
+#include <msctf.h>
+#include "../../TSF/tsf_guids.h"
 #include <cstdio>
 #include <string>
 
@@ -53,9 +55,31 @@ int wmain() {
     HMODULE tip = LoadLibraryW(siblingTipPath().c_str());
     if (!tip) { logLine("SKIP: could not load built TSF TIP"); return 77; }
     using RegisterFn = HRESULT (STDAPICALLTYPE*)();
+    using UnregisterFn = HRESULT (STDAPICALLTYPE*)();
     const auto registerFn = reinterpret_cast<RegisterFn>(GetProcAddress(tip, "DllRegisterServer"));
+    const auto unregisterFn = reinterpret_cast<UnregisterFn>(GetProcAddress(tip, "DllUnregisterServer"));
+    SetEnvironmentVariableW(L"VIKEY_TSF_HOST_TEST", L"1");
     if (!registerFn || FAILED(registerFn())) {
         logLine("FAIL: DllRegisterServer failed");
+        FreeLibrary(tip);
+        return 1;
+    }
+
+    ITfThreadMgr* threadManager = nullptr;
+    TfClientId clientId = TF_CLIENTID_NULL;
+    ITfTextInputProcessorEx* textService = nullptr;
+    HRESULT tsfHr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&threadManager));
+    if (SUCCEEDED(tsfHr)) tsfHr = threadManager->Activate(&clientId);
+    if (SUCCEEDED(tsfHr)) tsfHr = CoCreateInstance(CLSID_VikeyTextService, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&textService));
+    if (SUCCEEDED(tsfHr)) tsfHr = textService->ActivateEx(threadManager, clientId, 0);
+    if (FAILED(tsfHr)) {
+        logLine("FAIL: explicit TIP activation on window test thread");
+        if (textService) textService->Release();
+        if (threadManager) { threadManager->Deactivate(); threadManager->Release(); }
+        if (unregisterFn) unregisterFn();
+        SetEnvironmentVariableW(L"VIKEY_TSF_HOST_TEST", nullptr);
         FreeLibrary(tip);
         return 1;
     }
@@ -64,7 +88,15 @@ int wmain() {
     HWND window = CreateWindowExW(WS_EX_TOPMOST, MSFTEDIT_CLASS, L"",
         WS_POPUP | WS_VISIBLE | WS_BORDER | ES_MULTILINE,
         120, 120, 520, 160, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-    if (!window) { logLine("SKIP: RichEdit window unavailable"); FreeLibrary(tip); return 77; }
+    if (!window) {
+        logLine("SKIP: RichEdit window unavailable");
+        textService->Deactivate(); textService->Release();
+        threadManager->Deactivate(); threadManager->Release();
+        if (unregisterFn) unregisterFn();
+        SetEnvironmentVariableW(L"VIKEY_TSF_HOST_TEST", nullptr);
+        FreeLibrary(tip);
+        return 77;
+    }
     ShowWindow(window, SW_SHOW);
     BringWindowToTop(window);
     SetForegroundWindow(window);
@@ -74,6 +106,10 @@ int wmain() {
     if (GetForegroundWindow() != window || GetFocus() != window) {
         logLine("SKIP: runner did not grant foreground keyboard focus");
         DestroyWindow(window);
+        textService->Deactivate(); textService->Release();
+        threadManager->Deactivate(); threadManager->Release();
+        if (unregisterFn) unregisterFn();
+        SetEnvironmentVariableW(L"VIKEY_TSF_HOST_TEST", nullptr);
         FreeLibrary(tip);
         return 77;
     }
@@ -90,6 +126,10 @@ int wmain() {
     wchar_t text[64] = {};
     GetWindowTextW(window, text, 64);
     DestroyWindow(window);
+    textService->Deactivate(); textService->Release();
+    threadManager->Deactivate(); threadManager->Release();
+    if (unregisterFn) unregisterFn();
+    SetEnvironmentVariableW(L"VIKEY_TSF_HOST_TEST", nullptr);
     FreeLibrary(tip);
     if (sent != 10) { logLine("SKIP: SendInput did not deliver all key events"); return 77; }
     if (std::wstring(text) != L"viét") {

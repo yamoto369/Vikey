@@ -17,4 +17,4 @@ The TIP validates the focused document/context, respects the keyboard-disabled c
 - A best-effort RichEdit + SendInput smoke test exercises the registered TIP on a desktop runner; it is skipped if foreground desktop access is unavailable.
 - GitHub Actions archives TSF diagnostic logs even when tests fail.
 
-A memory-backed `ITextStoreACP` host exercises the TIP through `ITfKeystrokeMgr::TestKeyDown/KeyDown` and verifies the resulting ACP contents.
+A memory-backed `ITextStoreACP` host creates the TIP COM object, explicitly calls `ActivateEx` on its own `ITfThreadMgr`, dispatches `ITfKeystrokeMgr::TestKeyDown/KeyDown`, and verifies the resulting ACP contents. The test skips desktop-wide profile activation so it is isolated from the hosted runner's global input profile.

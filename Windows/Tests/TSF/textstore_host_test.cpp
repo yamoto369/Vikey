@@ -303,6 +303,7 @@ int wmain() {
     // Make the current keyboard LANGID deterministic across x64 and ARM64 hosted runners.
     HKL testLayout = LoadKeyboardLayoutW(L"00000409", KLF_ACTIVATE | KLF_SUBSTITUTE_OK);
     if (testLayout) ActivateKeyboardLayout(testLayout, 0);
+    SetEnvironmentVariableW(L"VIKEY_TSF_HOST_TEST", L"1");
     HRESULT hr = registerTip ? registerTip() : E_NOINTERFACE;
     if (FAILED(hr)) {
         writeLog("FAIL: DllRegisterServer");
@@ -316,6 +317,7 @@ int wmain() {
     ITfDocumentMgr* documentManager = nullptr;
     ITfContext* context = nullptr;
     ITfKeystrokeMgr* keystrokes = nullptr;
+    ITfTextInputProcessorEx* textService = nullptr;
     auto* store = new (std::nothrow) MemoryTextStore();
     if (!store) {
         writeLog("FAIL: allocate ITextStoreACP");
@@ -338,17 +340,23 @@ int wmain() {
     if (FAILED(hr)) { writeLog("FAIL: push TSF context"); goto Cleanup; }
     hr = threadManager->SetFocus(documentManager);
     if (FAILED(hr)) { writeLog("FAIL: set focused document manager"); goto Cleanup; }
+    // Explicitly create the TIP and activate it on this test's own thread manager/client.
+    // The keystroke manager then dispatches directly to the real ITfKeyEventSink.
+    hr = CoCreateInstance(CLSID_VikeyTextService, nullptr, CLSCTX_INPROC_SERVER,
+                          IID_PPV_ARGS(&textService));
+    if (FAILED(hr)) { writeLog("FAIL: CoCreateInstance(Vikey TIP)"); goto Cleanup; }
+    hr = textService->ActivateEx(threadManager, clientId, 0);
+    if (FAILED(hr)) { writeLog("FAIL: TIP ActivateEx on test thread manager"); goto Cleanup; }
+
     hr = threadManager->QueryInterface(IID_PPV_ARGS(&keystrokes));
     if (FAILED(hr)) { writeLog("FAIL: query ITfKeystrokeMgr"); goto Cleanup; }
-
-    // DllRegisterServer activates Vikey's language profile. Creating/activating the
-    // ThreadMgr and focusing this document lets TSF itself load the registered TIP.
-    // Do not create a second service instance on the same client/thread.
     {
         const WPARAM keys[] = {'V', 'I', 'E', 'T', 'S'};
         for (WPARAM key : keys) {
             BOOL eaten = FALSE;
-            hr = keystrokes->TestKeyDown(key, 0, &eaten);
+            const UINT scanCode = MapVirtualKeyW((UINT)key, MAPVK_VK_TO_VSC);
+            const LPARAM keyFlags = 1 | ((scanCode & 0xffu) << 16);
+            hr = keystrokes->TestKeyDown(key, keyFlags, &eaten);
             if (FAILED(hr) || !eaten) {
                 char diagnostic[192] = {};
                 snprintf(diagnostic, sizeof(diagnostic),
@@ -359,7 +367,7 @@ int wmain() {
                 goto Cleanup;
             }
             eaten = FALSE;
-            hr = keystrokes->KeyDown(key, 0, &eaten);
+            hr = keystrokes->KeyDown(key, keyFlags, &eaten);
             if (FAILED(hr) || !eaten) {
                 char diagnostic[192] = {};
                 snprintf(diagnostic, sizeof(diagnostic),
@@ -382,6 +390,10 @@ int wmain() {
 
 Cleanup:
     if (keystrokes) keystrokes->Release();
+    if (textService) {
+        textService->Deactivate();
+        textService->Release();
+    }
     if (documentManager) documentManager->Pop(TF_POPF_ALL);
     if (context) context->Release();
     if (documentManager) documentManager->Release();
@@ -391,6 +403,7 @@ Cleanup:
     }
     if (store) store->Release();
     if (unregisterTip) unregisterTip();
+    SetEnvironmentVariableW(L"VIKEY_TSF_HOST_TEST", nullptr);
     FreeLibrary(tipModule);
     if (SUCCEEDED(comInit)) CoUninitialize();
     return FAILED(hr) ? 1 : 0;
