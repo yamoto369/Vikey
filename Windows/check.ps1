@@ -9,7 +9,7 @@ $env:TMPDIR = $env:TEMP
 Write-Host '== Configure engine test tools =='
 cmake -S "$root/Windows" -B "$root/Windows/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
-cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test vikey_input_policy_test vikey_tsf_policy_test vikey_tsf vikey_tsf_com_test vikey_tsf_engine_test vikey
+cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test vikey_input_policy_test vikey_tsf_policy_test vikey_tsf vikey_tsf_com_test vikey_tsf_engine_test vikey vikey_tsf_controller_test
 if ($LASTEXITCODE -ne 0) { throw 'Building engine validation tools failed' }
 
 $harness = Join-Path $as 'test/harness.exe'
@@ -33,6 +33,15 @@ $tsfComTest = Join-Path $root 'Windows/build/App/vikey_tsf_com_test.exe'
 $tsfDll = Join-Path $root 'Windows/build/App/VikeyTsf.dll'
 & $tsfComTest $tsfDll
 if ($LASTEXITCODE -ne 0) { throw 'TSF COM DLL smoke test failed' }
+
+
+$tsfRuntime = Join-Path $root 'Windows/build/App/VikeyTsf-x64.dll'
+if (-not (Test-Path $tsfRuntime)) { throw 'TSF runtime sidecar was not copied beside Vikey.exe' }
+
+Write-Host '== TSF tray controller registration and activation =='
+$tsfControllerTest = Join-Path $root 'Windows/build/App/vikey_tsf_controller_test.exe'
+& $tsfControllerTest
+if ($LASTEXITCODE -ne 0) { throw 'TSF controller integration test failed' }
 
 Write-Host '== TSF engine adapter tests =='
 $tsfEngineTest = Join-Path $root 'Windows/build/App/vikey_tsf_engine_test.exe'

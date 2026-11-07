@@ -81,3 +81,10 @@ add_custom_command(TARGET vikey POST_BUILD
     $<TARGET_FILE:vikey_tsf>
     "$<TARGET_FILE_DIR:vikey>/${VIKEY_TSF_RUNTIME_NAME}"
   VERBATIM)
+
+# Exercise the real tray-side TSF registration and session activation controller.
+add_executable(vikey_tsf_controller_test ../Tests/tsf_controller_test.cpp TsfController.cpp)
+target_include_directories(vikey_tsf_controller_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(vikey_tsf_controller_test PRIVATE UNICODE _UNICODE)
+target_link_libraries(vikey_tsf_controller_test PRIVATE ole32 oleaut32 advapi32 user32 uuid)
+add_dependencies(vikey_tsf_controller_test vikey)
