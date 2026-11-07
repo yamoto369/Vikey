@@ -40,6 +40,27 @@ jobs:
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File Windows/check.ps1
         shell: pwsh
 
+      - name: Microsoft Defender scan of the build output
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File Windows/scan-defender.ps1 -Paths "Windows/build/App/Vikey.exe,Windows/build/App/VikeyTsf-x64.dll"
+        shell: pwsh
+
+      - name: Show TSF logs after a failure
+        if: failure()
+        run: |
+          Get-ChildItem Windows/build/App/Logs -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object {
+            "=== $($_.Name) ==="
+            Get-Content $_.FullName -Tail 200
+          }
+        shell: pwsh
+
+      - name: Upload TSF logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsf-logs-${{ github.run_number }}
+          path: Windows/build/App/Logs/*.log
+          if-no-files-found: ignore
+
   build:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/feature/windows-tsf-migration')
     name: Build Windows (${{ matrix.arch }})

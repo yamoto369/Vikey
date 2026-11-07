@@ -88,3 +88,11 @@ target_include_directories(vikey_tsf_controller_test PRIVATE ${CMAKE_CURRENT_SOU
 target_compile_definitions(vikey_tsf_controller_test PRIVATE UNICODE _UNICODE)
 target_link_libraries(vikey_tsf_controller_test PRIVATE ole32 oleaut32 advapi32 user32 shell32 uuid)
 add_dependencies(vikey_tsf_controller_test vikey)
+
+# End-to-end typing through the real TSF stack: registers and activates the TIP, then drives
+# ITfKeystrokeMgr against a mock text store and checks the Vietnamese text that comes out.
+add_executable(vikey_tsf_typing_test ../Tests/tsf_typing_test.cpp TsfController.cpp)
+target_include_directories(vikey_tsf_typing_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(vikey_tsf_typing_test PRIVATE UNICODE _UNICODE)
+target_link_libraries(vikey_tsf_typing_test PRIVATE ole32 oleaut32 advapi32 user32 shell32 uuid)
+add_dependencies(vikey_tsf_typing_test vikey)
