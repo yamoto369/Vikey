@@ -16,6 +16,11 @@ const CLSID CLSID_VikeyTextService =
 
 
 namespace {
+// GUID_PROP_INPUTSCOPE is not exported by every Windows SDK uuid.lib. Keep the
+// documented TSF property GUID local so the TIP has no optional GUID import.
+static const GUID kGuidPropInputScope =
+    { 0x1713dd5a, 0x68e7, 0x4a5b, { 0x9a, 0xf6, 0x59, 0x2a, 0x59, 0x5c, 0x77, 0x8d } };
+
 class VikeyEditSession final : public ITfEditSession {
 public:
     VikeyEditSession(ITfContext* context, vikey::tsf::EngineAdapter* adapter,
@@ -130,7 +135,7 @@ private:
         HRESULT hr = range->GetContext(&context);
         if (FAILED(hr) || !context) return false;
         ITfReadOnlyProperty* property = nullptr;
-        hr = context->GetAppProperty(GUID_PROP_INPUTSCOPE, &property);
+        hr = context->GetAppProperty(kGuidPropInputScope, &property);
         context->Release();
         if (FAILED(hr) || !property) return false;
 
