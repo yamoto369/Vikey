@@ -272,14 +272,19 @@ private:
     bool safe_ = false;
 };
 
-class VikeyEditSession final : public ITfEditSession {
+// Keeps the word being typed inside a TSF composition and rewrites the whole composition text on
+// every key. Nothing has to be read back from the application, so it also works in controls that
+// do not expose their text to TSF (Win32 EDIT, Notepad++, other IMM-bridged windows).
+class VikeyComposeSession final : public ITfEditSession {
 public:
-    VikeyEditSession(ITfContext* context, vikey::tsf::EngineAdapter* adapter,
-                     const vikey::tsf::EngineEdit& edit)
-        : context_(context), adapter_(adapter), edit_(edit) {
+    // text == nullptr ends the composition; otherwise the composition text becomes *text.
+    VikeyComposeSession(ITfContext* context, ITfComposition** slot, ITfCompositionSink* sink,
+                        const std::wstring* text)
+        : context_(context), slot_(slot), sink_(sink) {
         if (context_) context_->AddRef();
+        if (text) { text_ = *text; end_ = false; }
     }
-    ~VikeyEditSession() { if (context_) context_->Release(); }
+    ~VikeyComposeSession() { if (context_) context_->Release(); }
     STDMETHODIMP QueryInterface(REFIID iid, void** object) override {
         if (!object) return E_POINTER;
         *object = nullptr;
@@ -295,109 +300,68 @@ public:
         if (!refs) delete this;
         return refs;
     }
-    bool applied() const { return applied_; }
-
+    bool done() const { return done_; }
     STDMETHODIMP DoEditSession(TfEditCookie cookie) override {
-        if (!context_ || !adapter_) return E_UNEXPECTED;
-        TF_STATUS status{};
-        HRESULT hr = context_->GetStatus(&status);
-        if (FAILED(hr)) { tipNote(8, L"edit session: ITfContext::GetStatus failed"); return hr; }
-        if (status.dwDynamicFlags & TF_SD_READONLY) { tipNote(9, L"edit session: context is read-only"); return TS_E_READONLY; }
-
-        TF_SELECTION selection{};
-        ULONG fetched = 0;
-        hr = context_->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
-        if (FAILED(hr) || fetched != 1 || !selection.range) {
-            tipNote(10, L"edit session: no selection available (GetSelection failed)");
-            if (selection.range) selection.range->Release();
-            adapter_->reset();
-            return FAILED(hr) ? hr : TF_E_NOSELECTION;
-        }
-
-        BOOL selectionEmpty = FALSE;
-        hr = selection.range->IsEmpty(cookie, &selectionEmpty);
-        unsigned declinedId = 0;
-        const wchar_t* declined = nullptr;
-        if (FAILED(hr)) { declinedId = 11; declined = L"edit session: IsEmpty failed"; }
-        else if (!selectionEmpty) { declinedId = 12; declined = L"edit session: text is selected, key left to the application"; }
-        else if (!isSafeInputContext(cookie, selection.range)) { declinedId = 13; declined = L"edit session: input scope not allowed or unavailable (see the input scope line)"; }
-        else if (vikey::tsf::isSecureInputContext()) { declinedId = 14; declined = L"edit session: controller marks the focused field as secure/unknown"; }
-        else if (!vikey::tsf::isControllerRunning()) { declinedId = 15; declined = L"edit session: Vikey controller not reachable"; }
-        else if (!vikey::tsf::shouldHandleKey(vikey::tsf::TextContextKind::Editable, vLanguage != 0, false)) { declinedId = 16; declined = L"edit session: policy refused the key"; }
-        if (declined) {
-            tipNote(declinedId, declined);
-            selection.range->Release();
-            adapter_->reset();
-            return FAILED(hr) ? hr : S_OK;
-        }
-
-        const vikey::tsf::EngineEdit& edit = edit_;
-        if (!edit.consume) {
-            tipNote(17, L"edit session: engine ran and passed the key through (normal for plain letters)");
-            selection.range->Release();
+        if (!context_ || !slot_) return E_UNEXPECTED;
+        if (end_) {
+            if (*slot_) {
+                (*slot_)->EndComposition(cookie);
+                (*slot_)->Release();
+                *slot_ = nullptr;
+            }
+            done_ = true;
             return S_OK;
         }
-
-        ITfRange* replacement = nullptr;
-        hr = selection.range->Clone(&replacement);
-        selection.range->Release();
-        if (FAILED(hr) || !replacement) {
-            adapter_->reset();
-            return FAILED(hr) ? hr : E_FAIL;
-        }
-
-        if (edit.backspaces > 0) {
-            if (edit.backspaces > static_cast<UINT>(LONG_MAX)) {
-                replacement->Release();
-                adapter_->reset();
-                return E_INVALIDARG;
+        if (!*slot_) {
+            TF_SELECTION selection{};
+            ULONG fetched = 0;
+            HRESULT hr = context_->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+            if (FAILED(hr) || fetched != 1 || !selection.range) {
+                if (selection.range) selection.range->Release();
+                tipNote(26, L"compose: no selection to start a composition at");
+                return FAILED(hr) ? hr : TF_E_NOSELECTION;
             }
-            LONG shifted = 0;
-            const LONG requested = -static_cast<LONG>(edit.backspaces);
-            hr = replacement->ShiftStart(cookie, requested, &shifted, nullptr);
-            if (FAILED(hr) || shifted != requested) {
-                wchar_t note[160] = {};
-                swprintf_s(note, _countof(note), L"edit session: ShiftStart could not move back (requested=%ld shifted=%ld hr=0x%08lX)",
-                    static_cast<long>(requested), static_cast<long>(shifted), static_cast<unsigned long>(hr));
-                tipTrace(note);
-                replacement->Release();
-                adapter_->reset();
-                return FAILED(hr) ? hr : TF_E_INVALIDPOS;
+            ITfContextComposition* owner = nullptr;
+            hr = context_->QueryInterface(IID_PPV_ARGS(&owner));
+            if (SUCCEEDED(hr)) {
+                hr = owner->StartComposition(cookie, selection.range, sink_, slot_);
+                owner->Release();
+            }
+            selection.range->Release();
+            if (FAILED(hr) || !*slot_) {
+                wchar_t note[120] = {};
+                swprintf_s(note, _countof(note), L"compose: StartComposition failed (hr=0x%08lX)", static_cast<unsigned long>(hr));
+                tipNote(27, note);
+                *slot_ = nullptr;
+                return FAILED(hr) ? hr : E_FAIL;
             }
         }
-
-        if (edit.backspaces > 0 || !edit.text.empty()) {
-            hr = replacement->SetText(cookie, 0, edit.text.c_str(),
-                                       static_cast<LONG>(edit.text.size()));
-            if (FAILED(hr)) {
-                replacement->Release();
-                adapter_->reset();
-                return hr;
-            }
-        }
-
-        // Once SetText succeeds the key has been applied. Keep it eaten even
-        // if the host refuses a subsequent caret update, preventing duplicates.
-        hr = replacement->Collapse(cookie, TF_ANCHOR_END);
+        ITfRange* range = nullptr;
+        HRESULT hr = (*slot_)->GetRange(&range);
+        if (FAILED(hr) || !range) return FAILED(hr) ? hr : E_FAIL;
+        hr = range->SetText(cookie, 0, text_.c_str(), static_cast<LONG>(text_.size()));
         if (SUCCEEDED(hr)) {
             TF_SELECTION caret{};
-            caret.range = replacement;
-            caret.style.ase = TF_AE_END;
-            caret.style.fInterimChar = FALSE;
-            context_->SetSelection(cookie, 1, &caret);
+            if (SUCCEEDED(range->Collapse(cookie, TF_ANCHOR_END))) {
+                caret.range = range;
+                caret.style.ase = TF_AE_END;
+                caret.style.fInterimChar = FALSE;
+                context_->SetSelection(cookie, 1, &caret);
+            }
+            done_ = true;
+            tipNote(18, L"compose: first composition update applied");
         }
-        replacement->Release();
-        applied_ = true;
-        tipNote(18, L"edit session: first Vietnamese edit applied");
-        return S_OK;
+        range->Release();
+        return hr;
     }
-
 private:
     std::atomic<ULONG> refs_{1};
     ITfContext* context_ = nullptr;
-    vikey::tsf::EngineAdapter* adapter_ = nullptr;
-    vikey::tsf::EngineEdit edit_;
-    bool applied_ = false;
+    ITfComposition** slot_ = nullptr;
+    ITfCompositionSink* sink_ = nullptr;
+    std::wstring text_;
+    bool end_ = true;
+    bool done_ = false;
 };
 }
 
@@ -406,13 +370,14 @@ HMODULE g_module = nullptr;
 std::atomic<long> g_objects{0};
 std::atomic<long> g_locks{0};
 
-class VikeyTextService final : public ITfTextInputProcessor, public ITfKeyEventSink {
+class VikeyTextService final : public ITfTextInputProcessor, public ITfKeyEventSink, public ITfCompositionSink {
 public:
     VikeyTextService() { ++g_objects; }
     ~VikeyTextService() {
         // The TSF manager normally retains the advised sink until Unadvise.
         // Keep cleanup best-effort here; Deactivate reports failures to TSF.
         unadvise();
+        dropComposition();
         --g_objects;
     }
 
@@ -423,6 +388,8 @@ public:
             *object = static_cast<ITfTextInputProcessor*>(this);
         else if (IsEqualIID(iid, IID_ITfKeyEventSink))
             *object = static_cast<ITfKeyEventSink*>(this);
+        else if (IsEqualIID(iid, IID_ITfCompositionSink))
+            *object = static_cast<ITfCompositionSink*>(this);
         else
             return E_NOINTERFACE;
         AddRef();
@@ -460,15 +427,24 @@ public:
         return S_OK;
     }
 
+    STDMETHODIMP OnCompositionTerminated(TfEditCookie, ITfComposition*) override {
+        // The application ended the composition (click, focus change...): the word is committed.
+        dropComposition();
+        adapter_.reset();
+        return S_OK;
+    }
+
     STDMETHODIMP Deactivate() override {
         adapter_.reset();
         hasPending_ = false;
+        dropComposition();
         return unadvise();
     }
 
     STDMETHODIMP OnSetFocus(BOOL) override {
         adapter_.reset();
         hasPending_ = false;
+        dropComposition();
         observedLanguage_ = vLanguage;
         return S_OK;
     }
@@ -488,10 +464,11 @@ public:
         if (vikey::tsf::isSecureInputContext()) { tipNote(6, L"declined: controller marks the focused field as secure/unknown"); return S_OK; }
         if (vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
 
-        // TSF stops delivering a key to the application once OnTestKeyDown says
-        // "eaten", so only claim keys the engine really turns into an edit. Plain
-        // letters, Space, Enter, Backspace, arrows... must pass straight through.
+        // The word being typed lives in a TSF composition. Letters are always claimed (TSF no longer
+        // delivers a claimed key, so they are typed here), and every claimed key rewrites the whole
+        // composition text. Any other key first commits the word and then reaches the application.
         hasPending_ = false;
+        if (composition_ && composeContext_ != context) dropComposition();
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         const bool capsLock = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
         const bool modified =
@@ -499,31 +476,48 @@ public:
             (GetKeyState(VK_MENU) & 0x8000) != 0 ||
             (GetKeyState(VK_LWIN) & 0x8000) != 0 ||
             (GetKeyState(VK_RWIN) & 0x8000) != 0;
-        if (!modified && !contextAllowsEditing(context)) {
+        if (modified || !contextAllowsEditing(context)) {
+            endComposition();
             adapter_.reset();
             return S_OK;
         }
+        const bool isLetter = key >= 'A' && key <= 'Z';
+        const bool composing = composition_ != nullptr;
         vikey::tsf::EngineEdit edit =
             adapter_.processKey(static_cast<UINT>(key), shift, capsLock, modified);
         {
-            wchar_t note[120] = {};
-            swprintf_s(note, _countof(note), L"engine vk=0x%02X consume=%d", static_cast<unsigned>(key), edit.consume ? 1 : 0);
+            wchar_t note[160] = {};
+            swprintf_s(note, _countof(note), L"engine vk=0x%02X consume=%d backspaces=%u textLength=%u word=%u",
+                static_cast<unsigned>(key), edit.consume ? 1 : 0, static_cast<unsigned>(edit.backspaces),
+                static_cast<unsigned>(edit.text.size()), static_cast<unsigned>(word_.size()));
             tipTrace(note);
         }
-        if (!edit.consume) {
-            tipNote(17, L"engine ran and passed the key through (normal for plain letters)");
+        std::wstring target = word_;
+        bool claim = false;
+        if (key == VK_BACK) {
+            if (composing && !target.empty()) { target.pop_back(); claim = true; }
+        } else if (edit.consume) {
+            if (edit.backspaces > target.size() && !isLetter) {
+                tipNote(28, L"engine wants to rewrite text outside the composition; key passed through");
+            } else {
+                const size_t back = edit.backspaces < target.size() ? edit.backspaces : target.size();
+                if (back != edit.backspaces) tipNote(29, L"engine asked to delete more than the composition holds; clamped");
+                target.erase(target.size() - back);
+                target += edit.text;
+                claim = true;
+            }
+        } else if (isLetter) {
+            const std::wstring raw = typedCharacter(static_cast<UINT>(key));
+            if (!raw.empty()) { target += raw; claim = true; }
+        }
+        if (!claim) {
+            endComposition();
             return S_OK;
         }
-        {
-            wchar_t note[160] = {};
-            swprintf_s(note, _countof(note), L"claim vk=0x%02X backspaces=%u newTextLength=%u",
-                static_cast<unsigned>(key), static_cast<unsigned>(edit.backspaces), static_cast<unsigned>(edit.text.size()));
-            tipTrace(note);
-        }
         pendingKey_ = static_cast<UINT>(key);
-        pendingEdit_ = std::move(edit);
+        pendingText_ = std::move(target);
         hasPending_ = true;
-        tipNote(7, L"OnTestKeyDown claimed a key for a Vietnamese edit");
+        tipNote(7, L"OnTestKeyDown claimed a key for the composition");
         *eaten = TRUE;
         return S_OK;
     }
@@ -536,21 +530,30 @@ public:
             return S_OK;
         }
         hasPending_ = false;
-        auto* session = new (std::nothrow) VikeyEditSession(context, &adapter_, pendingEdit_);
+        const bool ending = pendingText_.empty();
+        auto* session = new (std::nothrow) VikeyComposeSession(context, &composition_,
+            static_cast<ITfCompositionSink*>(this), ending ? nullptr : &pendingText_);
         if (!session) return E_OUTOFMEMORY;
+        if (!composition_ && composeContext_ != context) {
+            if (composeContext_) composeContext_->Release();
+            composeContext_ = context;
+            composeContext_->AddRef();
+        }
         HRESULT sessionResult = E_FAIL;
         HRESULT hr = context->RequestEditSession(clientId_, session,
             TF_ES_SYNC | TF_ES_READWRITE, &sessionResult);
-        if (SUCCEEDED(hr) && SUCCEEDED(sessionResult) && session->applied()) {
+        if (SUCCEEDED(hr) && SUCCEEDED(sessionResult) && session->done()) {
+            if (ending) dropComposition(); else word_ = pendingText_;
             *eaten = TRUE;
         } else {
-            wchar_t note[160] = {};
-            swprintf_s(note, _countof(note), L"edit session did not apply the edit (request hr=0x%08lX, session hr=0x%08lX); typing the plain character instead",
+            wchar_t note[180] = {};
+            swprintf_s(note, _countof(note), L"composition update failed (request hr=0x%08lX, session hr=0x%08lX); typing the plain character instead",
                 static_cast<unsigned long>(hr), static_cast<unsigned long>(sessionResult));
             tipNote(24, note);
+            dropComposition();
             adapter_.reset();
             // TSF no longer delivers a key that OnTestKeyDown claimed, so type it here.
-            *eaten = insertPlainCharacter(context, static_cast<UINT>(key)) ? TRUE : FALSE;
+            *eaten = key == VK_BACK ? TRUE : (insertPlainCharacter(context, static_cast<UINT>(key)) ? TRUE : FALSE);
             if (!*eaten) tipNote(25, L"the plain character could not be typed either; the key was lost");
         }
         session->Release();
@@ -584,6 +587,26 @@ private:
         const bool done = SUCCEEDED(hr) && SUCCEEDED(sessionResult) && insert->inserted();
         insert->Release();
         return done;
+    }
+
+    void dropComposition() {
+        if (composition_) { composition_->Release(); composition_ = nullptr; }
+        if (composeContext_) { composeContext_->Release(); composeContext_ = nullptr; }
+        word_.clear();
+    }
+
+    // Commits the word being typed: the text stays, it just stops being a composition.
+    void endComposition() {
+        if (composition_ && composeContext_) {
+            auto* session = new (std::nothrow) VikeyComposeSession(composeContext_, &composition_,
+                static_cast<ITfCompositionSink*>(this), nullptr);
+            if (session) {
+                HRESULT sessionResult = E_FAIL;
+                composeContext_->RequestEditSession(clientId_, session, TF_ES_SYNC | TF_ES_READWRITE, &sessionResult);
+                session->Release();
+            }
+        }
+        dropComposition();
     }
 
     bool contextAllowsEditing(ITfContext* context) {
@@ -635,7 +658,10 @@ private:
     int observedLanguage_ = -1;
     bool hasPending_ = false;
     UINT pendingKey_ = 0;
-    vikey::tsf::EngineEdit pendingEdit_;
+    std::wstring pendingText_;
+    ITfComposition* composition_ = nullptr;
+    ITfContext* composeContext_ = nullptr;   // holds a reference while a composition exists
+    std::wstring word_;                      // the text of the composition, as the application shows it
     ITfThreadMgr* threadMgr_ = nullptr;
     ITfKeystrokeMgr* keyMgr_ = nullptr;
     TfClientId clientId_ = TF_CLIENTID_NULL;
