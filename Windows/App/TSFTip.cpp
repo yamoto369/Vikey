@@ -66,7 +66,7 @@ public:
 
         BOOL selectionEmpty = FALSE;
         hr = selection.range->IsEmpty(cookie, &selectionEmpty);
-        if (FAILED(hr) || !selectionEmpty || !isSafeInputContext(cookie, selection.range) ||
+        if (FAILED(hr) || !selectionEmpty || !isSafeInputContext(cookie, selection.range) || vikey::tsf::isSecureInputContext() ||
             !vikey::tsf::shouldHandleKey(vikey::tsf::TextContextKind::Editable, vLanguage != 0, false)) {
             selection.range->Release();
             adapter_->reset();
@@ -251,7 +251,7 @@ public:
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
         refreshRuntimeSettings();
-        if (!context || vLanguage == 0 ||
+        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() ||
             vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
         *eaten = TRUE; // Request OnKeyDown; actual consumption is decided in the edit session.
         return S_OK;
@@ -259,8 +259,8 @@ public:
     STDMETHODIMP OnKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
-        vikey::tsf::refreshTsfEngineSettings();
-        if (!context || vLanguage == 0 ||
+        refreshRuntimeSettings();
+        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() ||
             vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
 
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -385,7 +385,7 @@ static HRESULT registerComClass() {
     wchar_t keyPath[128] = {};
     if (swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s\\InprocServer32", clsid) < 0) return E_FAIL;
     HKEY key = nullptr;
-    LONG error = RegCreateKeyExW(HKEY_CLASSES_ROOT, keyPath, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
+    LONG error = RegCreateKeyExW(HKEY_CURRENT_USER, (std::wstring(L"Software\\Classes") + L"\\" + keyPath).c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
     if (error != ERROR_SUCCESS) return HRESULT_FROM_WIN32(error);
     error = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(module),
         static_cast<DWORD>((wcslen(module) + 1) * sizeof(wchar_t)));
@@ -433,7 +433,7 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
         StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
         wchar_t keyPath[128] = {};
         swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s", clsid);
-        RegDeleteTreeW(HKEY_CLASSES_ROOT, keyPath);
+        RegDeleteTreeW(HKEY_CURRENT_USER, (std::wstring(L"Software\\Classes") + L"\\" + keyPath).c_str());
     }
     return hr;
 }

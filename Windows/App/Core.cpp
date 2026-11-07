@@ -56,6 +56,30 @@ static std::function<void(int)> _observer;
 static std::wstring _frontApp = L"UnknownApp";   // exe name of the app in front
 static std::vector<std::wstring> _blacklistedApps;
 static bool _frontAppBlacklisted = false;
+static bool _tsfInputActive = false;
+static HANDLE _tsfSecureMapping = nullptr;
+static volatile LONG* _tsfSecureState = nullptr;
+static bool initializeTsfSecureState() {
+    if (_tsfSecureState) return true;
+    _tsfSecureMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+        0, sizeof(LONG), L"Local\\VikeySecureInputState");
+    if (!_tsfSecureMapping) return false;
+    _tsfSecureState = static_cast<volatile LONG*>(
+        MapViewOfFile(_tsfSecureMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(LONG)));
+    if (!_tsfSecureState) {
+        CloseHandle(_tsfSecureMapping);
+        _tsfSecureMapping = nullptr;
+        return false;
+    }
+    InterlockedExchange(_tsfSecureState, 1); // Unknown focus is secure until UIA confirms otherwise.
+    return true;
+}
+static void releaseTsfSecureState() {
+    if (_tsfSecureState) UnmapViewOfFile(const_cast<LONG*>(_tsfSecureState));
+    if (_tsfSecureMapping) CloseHandle(_tsfSecureMapping);
+    _tsfSecureState = nullptr;
+    _tsfSecureMapping = nullptr;
+}
 static std::wstring _siteHost;                    // host of the browser tab in front (Phase 3)
 static bool _otherInputLanguage = false;          // Japanese/Chinese IME layout active
 static int _languageTemp = 0;
@@ -374,6 +398,7 @@ void setLanguageQuiet(int lang) {
 }
 int language() { return vLanguage; }
 void setLanguageObserver(std::function<void(int)> f) { _observer = f; }
+void setTsfInputActive(bool active) { _tsfInputActive = active && _tsfSecureState != nullptr; }
 
 void resetTyping() { ResetEnglishWord(true); _autoFixUndo.active = false; startNewSession(); }
 
@@ -560,7 +585,9 @@ static LRESULT CALLBACK keyboardHook(int nCode, WPARAM wParam, LPARAM lParam) {
 
     // a password field gets the keys exactly as typed, in both languages: no Telex, no auto switch, no Backspace undo (also
     // right after a focus change, until the field has been checked)
-    if (site::focusedIsPassword()) { resetTyping(); return CallNextHookEx(_kbHook, nCode, wParam, lParam); }
+    const bool passwordContext = site::focusedIsPassword();
+    if (_tsfSecureState) InterlockedExchange(_tsfSecureState, passwordContext ? 1 : 0);
+    if (passwordContext) { resetTyping(); return CallNextHookEx(_kbHook, nCode, wParam, lParam); }
 
     // Backspace right after an automatic correction undoes it
     if (_keycode == KEY_DELETE && _autoFixUndo.active && !(OTHER_CONTROL_KEY)) { if (UndoAutoFixWithBackspace()) return 1; }
@@ -573,6 +600,11 @@ static LRESULT CALLBACK keyboardHook(int nCode, WPARAM wParam, LPARAM lParam) {
         return CallNextHookEx(_kbHook, nCode, wParam, lParam);
     }
     if (vOtherLanguage && _otherInputLanguage) return CallNextHookEx(_kbHook, nCode, wParam, lParam);
+
+    // TSF owns Vietnamese text editing when its session profile is active.
+    // Keep this hook alive for the existing tray hotkey, but never feed the
+    // same Vietnamese key into the legacy engine as well.
+    if (_tsfInputActive) return CallNextHookEx(_kbHook, nCode, wParam, lParam);
 
     vAutoSwitchRequest = -1;
     vKeyHandleEvent(vKeyEvent::Keyboard, vKeyEventState::KeyDown, _keycode,
@@ -600,6 +632,7 @@ static VOID CALLBACK foregroundHook(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWOR
 
 bool start() {
     if (_kbHook) return true;
+    initializeTsfSecureState();
     pData = (vKeyHookState*)vKeyInit();
     _blacklistedApps = prefs::getStringList(L"AppBlacklist");
     reloadSettings();
@@ -618,6 +651,9 @@ void stop() {
     flushTypingLog();
     if (_kbHook) UnhookWindowsHookEx(_kbHook); if (_mouseHook) UnhookWindowsHookEx(_mouseHook); if (_fgHook) UnhookWinEvent(_fgHook); if (_focusHook) UnhookWinEvent(_focusHook);
     _kbHook = nullptr; _mouseHook = nullptr; _fgHook = nullptr;
+    _focusHook = nullptr;
+    _tsfInputActive = false;
+    releaseTsfSecureState();
 }
 bool isRunning() { return _kbHook != nullptr; }
 

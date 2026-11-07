@@ -9,6 +9,7 @@
 #include <gdiplus.h>
 using namespace Gdiplus;
 #include "Core.h"
+#include "TsfController.h"
 #include "Prefs.h"
 #include "Site.h"
 #include "Settings.h"
@@ -26,6 +27,8 @@ static const UINT WM_VIKEY_SETLANG = WM_APP + 2;   // tests: wParam = language (
 static const UINT WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");   // Explorer (re)started: the tray is empty
 static const UINT TIMER_FLUSH = 1;
 static const UINT TIMER_TRAY_DPI = 2;
+static const UINT TIMER_TSF_SYNC = 3;
+static const UINT WM_TSF_SYNC = WM_APP + 4;
 enum { ID_LOGTOGGLE = 100, ID_LOG, ID_ABOUT, ID_QUIT, ID_GUIDE };
 
 static HWND _hwnd; static NOTIFYICONDATAW _nid = {};
@@ -186,6 +189,10 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (wp == TIMER_FLUSH) core::flushTypingLog();
         else if (wp == TIMER_TRAY_DPI) refreshTrayIcons();
+        else if (wp == TIMER_TSF_SYNC) core::setTsfInputActive(tsf::sync(core::language() != 0));
+        return 0;
+    case WM_TSF_SYNC:
+        core::setTsfInputActive(tsf::sync(core::language() != 0));
         return 0;
     case WM_SETTINGCHANGE:
     case WM_DISPLAYCHANGE:
@@ -194,6 +201,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case site::WM_SITE: { HWND w; std::wstring host = site::lastHost(&w); if (w == GetForegroundWindow()) core::onSiteChanged(host); return 0; }
     case WM_DESTROY:
+        tsf::shutdown(); // Stop TIP callbacks before releasing the shared secure-focus state.
         core::stop();
         if (_trayAdded) Shell_NotifyIconW(NIM_DELETE, &_nid);
         _trayAdded = false;
@@ -240,7 +248,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     _nid.cbSize = sizeof(_nid); _nid.hWnd = _hwnd; _nid.uID = 1; _nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP; _nid.uCallbackMessage = WM_TRAY; _nid.hIcon = _iconV;
     wcscpy_s(_nid.szTip, L"Vikey");
     _trayAdded = Shell_NotifyIconW(NIM_ADD, &_nid) != FALSE;
-    vikey::core::setLanguageObserver([](int lang) { updateTray(lang); vikey::ui::languageChanged(lang); });
+    const bool tsfReady = vikey::tsf::initialize();
+    vikey::core::setTsfInputActive(false);
+    vikey::core::setLanguageObserver([](int lang) {
+        updateTray(lang);
+        vikey::ui::languageChanged(lang);
+        if (_hwnd) PostMessageW(_hwnd, WM_TSF_SYNC, 0, 0);
+    });
     if (!vikey::core::start()) {
         MessageBoxW(nullptr, L"Không cài được bộ bắt phím (SetWindowsHookEx).", L"Vikey", MB_ICONERROR);
         if (_trayAdded) Shell_NotifyIconW(NIM_DELETE, &_nid);
@@ -252,6 +266,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 1;
     }
     updateTray(vikey::core::language());
+    vikey::core::setTsfInputActive(tsfReady && vikey::tsf::sync(vikey::core::language() != 0));
     if (!vikey::prefs::has(L"FirstRunDone")) {
         vikey::ui::showSettings(inst, true);
     } else if (vikey::prefs::getInt(L"ShowWindowAtStartup", 1) != 0) {
@@ -259,6 +274,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
     SetTimer(_hwnd, TIMER_FLUSH, 10000, nullptr);
     SetTimer(_hwnd, TIMER_TRAY_DPI, 3000, nullptr);
+    SetTimer(_hwnd, TIMER_TSF_SYNC, 1500, nullptr);
     vikey::site::start(_hwnd);   // per-website memory and password fields, read off the hook thread
     MSG msg; while (GetMessageW(&msg, nullptr, 0, 0)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     ReleaseMutex(single); CloseHandle(single);

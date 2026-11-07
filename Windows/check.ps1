@@ -9,7 +9,7 @@ $env:TMPDIR = $env:TEMP
 Write-Host '== Configure engine test tools =='
 cmake -S "$root/Windows" -B "$root/Windows/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
-cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test vikey_input_policy_test vikey_tsf_policy_test vikey_tsf vikey_tsf_com_test vikey_tsf_engine_test
+cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test vikey_input_policy_test vikey_tsf_policy_test vikey_tsf vikey_tsf_com_test vikey_tsf_engine_test vikey
 if ($LASTEXITCODE -ne 0) { throw 'Building engine validation tools failed' }
 
 $harness = Join-Path $as 'test/harness.exe'

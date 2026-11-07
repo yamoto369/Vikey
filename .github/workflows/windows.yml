@@ -82,7 +82,9 @@ jobs:
         if: hashFiles('Windows/App/CMakeLists.txt') != ''
         with:
           name: Vikey-windows-${{ matrix.arch }}
-          path: Windows/build/App/Vikey.exe
+          path: |
+            Windows/build/App/Vikey.exe
+            Windows/build/App/VikeyTsf-*.dll
 
   package:
     if: github.event_name == 'workflow_dispatch'
@@ -135,6 +137,12 @@ jobs:
 
             Sign $src
             Copy-Item $src "dist/Vikey-$arch.exe"
+            $tsf = "artifacts/Vikey-windows-$arch/VikeyTsf-$arch.dll"
+            if (-not (Test-Path $tsf)) {
+              throw "TSF runtime not found: $tsf"
+            }
+            Sign $tsf
+            Copy-Item $tsf "dist/VikeyTsf-$arch.dll"
           }
 
           Get-ChildItem dist -File | Select-Object Name, Length | Format-Table -AutoSize

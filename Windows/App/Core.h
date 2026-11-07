@@ -26,6 +26,7 @@ std::vector<std::wstring> blacklistedApps();
 
 /// Called on the UI thread whenever the language changes (menu icon, settings window).
 void setLanguageObserver(std::function<void(int)> f);
+void setTsfInputActive(bool active); // TSF handles Vietnamese text; the hook remains for hotkeys/fallback
 
 /// Forget the word being typed (the cursor moved to another field without a click).
 void resetTyping();
