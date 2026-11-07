@@ -14,6 +14,8 @@ HMODULE g_tipModule = nullptr;
 using RegisterServerFn = HRESULT (WINAPI*)();
 RegisterServerFn g_registerServer = nullptr;
 bool g_comInitialized = false;
+ITfThreadMgr* g_threadMgr = nullptr;
+TfClientId g_clientId = TF_CLIENTID_NULL;
 bool g_ready = false;
 LANGID g_activeLanguage = 0;
 
@@ -205,6 +207,14 @@ bool initialize() {
     if (!g_tipModule) { shutdown(); return false; }
     g_registerServer = reinterpret_cast<RegisterServerFn>(GetProcAddress(g_tipModule, "DllRegisterServer"));
     if (!g_registerServer || !ensureRegistered(path)) { shutdown(); return false; }
+
+    // Profile activation requires a TSF thread manager on the calling thread.
+    hr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&g_threadMgr));
+    if (FAILED(hr) || !g_threadMgr) { shutdown(); return false; }
+    hr = g_threadMgr->Activate(&g_clientId);
+    if (FAILED(hr) || g_clientId == TF_CLIENTID_NULL) { shutdown(); return false; }
+
     g_ready = true;
     return true;
 }
@@ -271,6 +281,12 @@ bool sync(bool vietnameseEnabled) {
 
 void shutdown() {
     deactivateActiveProfile();
+    if (g_threadMgr) {
+        if (g_clientId != TF_CLIENTID_NULL) g_threadMgr->Deactivate();
+        g_threadMgr->Release();
+        g_threadMgr = nullptr;
+        g_clientId = TF_CLIENTID_NULL;
+    }
     g_ready = false;
     g_registerServer = nullptr;
     if (g_tipModule) { FreeLibrary(g_tipModule); g_tipModule = nullptr; }
