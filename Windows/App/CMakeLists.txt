@@ -46,8 +46,8 @@ target_include_directories(vikey_tsf_engine_adapter PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../Engine/platforms)
 target_link_libraries(vikey_tsf_engine_adapter PUBLIC vikey_engine)
 
-# Initial in-process TSF COM DLL. Key callbacks remain pass-through until
-# the edit-session integration is implemented and tested.
+# In-process TSF COM DLL. Text mutations are performed only in synchronous
+# TSF read/write edit sessions; unsafe contexts are passed through.
 add_library(vikey_tsf MODULE TSFTip.cpp)
 target_link_libraries(vikey_tsf PRIVATE vikey_tsf_engine_adapter)
 target_include_directories(vikey_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

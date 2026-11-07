@@ -1,4 +1,11 @@
 #include "TSFTip.h"
+#include "TsfEngineAdapter.h"
+#include "KeyMap.h"
+#include "TSFPolicy.h"
+#include <inputscope.h>
+#include <vector>
+#include <string>
+#include <climits>
 #include <atomic>
 #include <cstdio>
 #include <cwchar>
@@ -6,6 +13,168 @@
 
 const CLSID CLSID_VikeyTextService =
 { 0x9b7a4d31, 0x6d8f, 0x4d22, { 0xa1, 0x73, 0x5e, 0x91, 0x2c, 0x44, 0x8b, 0x60 } };
+
+
+namespace {
+class VikeyEditSession final : public ITfEditSession {
+public:
+    VikeyEditSession(ITfContext* context, vikey::tsf::EngineAdapter* adapter,
+                     UINT virtualKey, bool shift, bool capsLock, bool modified)
+        : context_(context), adapter_(adapter), virtualKey_(virtualKey),
+          shift_(shift), capsLock_(capsLock), modified_(modified) {
+        if (context_) context_->AddRef();
+    }
+    ~VikeyEditSession() { if (context_) context_->Release(); }
+    STDMETHODIMP QueryInterface(REFIID iid, void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_ITfEditSession))
+            *object = static_cast<ITfEditSession*>(this);
+        else return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        ULONG refs = --refs_;
+        if (!refs) delete this;
+        return refs;
+    }
+    bool applied() const { return applied_; }
+
+    STDMETHODIMP DoEditSession(TfEditCookie cookie) override {
+        if (!context_ || !adapter_) return E_UNEXPECTED;
+        TF_STATUS status{};
+        HRESULT hr = context_->GetStatus(&status);
+        if (FAILED(hr)) return hr;
+        if (status.dwDynamicFlags & TF_SD_READONLY) return TS_E_READONLY;
+
+        TF_SELECTION selection{};
+        ULONG fetched = 0;
+        hr = context_->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+        if (FAILED(hr) || fetched != 1 || !selection.range) {
+            if (selection.range) selection.range->Release();
+            adapter_->reset();
+            return FAILED(hr) ? hr : TF_E_NOSELECTION;
+        }
+
+        BOOL selectionEmpty = FALSE;
+        hr = selection.range->IsEmpty(cookie, &selectionEmpty);
+        if (FAILED(hr) || !selectionEmpty || !isSafeInputContext(cookie, selection.range) ||
+            !vikey::tsf::shouldHandleKey(vikey::tsf::TextContextKind::Editable, vLanguage != 0, false)) {
+            selection.range->Release();
+            adapter_->reset();
+            return FAILED(hr) ? hr : S_OK;
+        }
+
+        vikey::tsf::EngineEdit edit =
+            adapter_->processKey(virtualKey_, shift_, capsLock_, modified_);
+        if (!edit.consume) {
+            selection.range->Release();
+            return S_OK;
+        }
+
+        ITfRange* replacement = nullptr;
+        hr = selection.range->Clone(&replacement);
+        selection.range->Release();
+        if (FAILED(hr) || !replacement) {
+            adapter_->reset();
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+
+        if (edit.backspaces > 0) {
+            if (edit.backspaces > static_cast<UINT>(LONG_MAX)) {
+                replacement->Release();
+                adapter_->reset();
+                return E_INVALIDARG;
+            }
+            LONG shifted = 0;
+            const LONG requested = -static_cast<LONG>(edit.backspaces);
+            hr = replacement->ShiftStart(cookie, requested, &shifted, nullptr);
+            if (FAILED(hr) || shifted != requested) {
+                replacement->Release();
+                adapter_->reset();
+                return FAILED(hr) ? hr : TF_E_INVALIDPOS;
+            }
+        }
+
+        if (edit.backspaces > 0 || !edit.text.empty()) {
+            hr = replacement->SetText(cookie, 0, edit.text.c_str(),
+                                       static_cast<LONG>(edit.text.size()));
+            if (FAILED(hr)) {
+                replacement->Release();
+                adapter_->reset();
+                return hr;
+            }
+        }
+
+        // Once SetText succeeds the key has been applied. Keep it eaten even
+        // if the host refuses a subsequent caret update, preventing duplicates.
+        hr = replacement->Collapse(cookie, TF_ANCHOR_END);
+        if (SUCCEEDED(hr)) {
+            TF_SELECTION caret{};
+            caret.range = replacement;
+            caret.style.ase = TF_AE_END;
+            caret.style.fInterimChar = FALSE;
+            context_->SetSelection(cookie, 1, &caret);
+        }
+        replacement->Release();
+        applied_ = true;
+        return S_OK;
+    }
+
+private:
+    static bool isSafeInputContext(TfEditCookie cookie, ITfRange* range) {
+        if (!range) return false;
+        ITfContext* context = nullptr;
+        HRESULT hr = range->GetContext(&context);
+        if (FAILED(hr) || !context) return false;
+        ITfReadOnlyProperty* property = nullptr;
+        hr = context->GetAppProperty(GUID_PROP_INPUTSCOPE, &property);
+        context->Release();
+        if (FAILED(hr) || !property) return false;
+
+        VARIANT value;
+        VariantInit(&value);
+        hr = property->GetValue(cookie, range, &value);
+        property->Release();
+        if (FAILED(hr) || value.vt != VT_UNKNOWN || !value.punkVal) {
+            VariantClear(&value);
+            return false;
+        }
+
+        ITfInputScope* inputScope = nullptr;
+        hr = value.punkVal->QueryInterface(IID_PPV_ARGS(&inputScope));
+        VariantClear(&value);
+        if (FAILED(hr) || !inputScope) return false;
+
+        InputScope* scopes = nullptr;
+        UINT count = 0;
+        hr = inputScope->GetInputScopes(&scopes, &count);
+        inputScope->Release();
+        if (FAILED(hr) || !scopes || count == 0 || count > 32) {
+            if (scopes) CoTaskMemFree(scopes);
+            return false;
+        }
+
+        bool safe = true;
+        for (UINT i = 0; i < count; ++i) {
+            if (!vikey::tsf::isAllowedInputScope(scopes[i])) {
+                safe = false;
+                break;
+            }
+        }
+        CoTaskMemFree(scopes);
+        return safe;
+    }
+
+    std::atomic<ULONG> refs_{1};
+    ITfContext* context_ = nullptr;
+    vikey::tsf::EngineAdapter* adapter_ = nullptr;
+    UINT virtualKey_ = 0;
+    bool shift_ = false, capsLock_ = false, modified_ = false, applied_ = false;
+};
+}
 
 namespace {
 HMODULE g_module = nullptr;
@@ -63,18 +232,47 @@ public:
     }
 
     STDMETHODIMP Deactivate() override {
+        adapter_.reset();
         return unadvise();
     }
 
-    STDMETHODIMP OnSetFocus(BOOL) override { return S_OK; }
-    STDMETHODIMP OnTestKeyDown(ITfContext*, WPARAM, LPARAM, BOOL* eaten) override {
-        if (!eaten) return E_POINTER;
-        *eaten = FALSE;
+    STDMETHODIMP OnSetFocus(BOOL) override {
+        adapter_.reset();
         return S_OK;
     }
-    STDMETHODIMP OnKeyDown(ITfContext*, WPARAM, LPARAM, BOOL* eaten) override {
+    STDMETHODIMP OnTestKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
+        if (!context || vLanguage == 0 ||
+            vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
+        *eaten = TRUE; // Request OnKeyDown; actual consumption is decided in the edit session.
+        return S_OK;
+    }
+    STDMETHODIMP OnKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
+        if (!eaten) return E_POINTER;
+        *eaten = FALSE;
+        if (!context || vLanguage == 0 ||
+            vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
+
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool capsLock = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+        const bool modified =
+            (GetKeyState(VK_CONTROL) & 0x8000) != 0 ||
+            (GetKeyState(VK_MENU) & 0x8000) != 0 ||
+            (GetKeyState(VK_LWIN) & 0x8000) != 0 ||
+            (GetKeyState(VK_RWIN) & 0x8000) != 0;
+
+        auto* session = new (std::nothrow) VikeyEditSession(
+            context, &adapter_, static_cast<UINT>(key), shift, capsLock, modified);
+        if (!session) return E_OUTOFMEMORY;
+        HRESULT sessionResult = E_FAIL;
+        HRESULT hr = context->RequestEditSession(clientId_, session,
+            TF_ES_SYNC | TF_ES_READWRITE, &sessionResult);
+        if (SUCCEEDED(hr) && SUCCEEDED(sessionResult))
+            *eaten = session->applied() ? TRUE : FALSE;
+        else
+            adapter_.reset();
+        session->Release();
         return S_OK;
     }
     STDMETHODIMP OnTestKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* eaten) override {
@@ -114,6 +312,7 @@ private:
         clientId_ = TF_CLIENTID_NULL;
     }
     std::atomic<ULONG> refs_{1};
+    vikey::tsf::EngineAdapter adapter_;
     ITfThreadMgr* threadMgr_ = nullptr;
     ITfKeystrokeMgr* keyMgr_ = nullptr;
     TfClientId clientId_ = TF_CLIENTID_NULL;

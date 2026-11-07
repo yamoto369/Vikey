@@ -2,6 +2,6 @@
 #include <windows.h>
 #include <msctf.h>
 
-// Vikey's initial TSF COM class. The class is deliberately pass-through:
-// it advises the TSF key sink but does not consume or edit text yet.
+// Vikey in-process TSF text service. All document changes are performed
+// under TSF edit sessions; unsupported and sensitive contexts remain pass-through.
 extern const CLSID CLSID_VikeyTextService;
