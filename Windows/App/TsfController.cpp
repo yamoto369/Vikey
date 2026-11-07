@@ -15,6 +15,7 @@ using RegisterServerFn = HRESULT (WINAPI*)();
 RegisterServerFn g_registerServer = nullptr;
 bool g_comInitialized = false;
 ITfThreadMgr* g_threadMgr = nullptr;
+ITfInputProcessorProfiles* g_profiles = nullptr;
 TfClientId g_clientId = TF_CLIENTID_NULL;
 bool g_ready = false;
 LANGID g_activeLanguage = 0;
@@ -159,21 +160,18 @@ bool ensureRegistered(const std::wstring& dllPath) {
         profiles->Release();
         return false;
     }
-    const LANGID current = currentThreadLanguage();
-    const bool profileReady = current && ensureLanguageProfile(profiles, current);
+    LANGID current = 0;
+    const bool profileReady = SUCCEEDED(profiles->GetCurrentLanguage(&current)) &&
+        current && ensureLanguageProfile(profiles, current);
     profiles->Release();
     return profileReady && ensureKeyboardCategory();
 }
 
 bool isActiveProfile(LANGID language) {
-    ITfInputProcessorProfiles* profiles = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profiles));
-    if (FAILED(hr) || !profiles) return false;
+    if (!g_profiles) return false;
     LANGID activeLanguage = 0;
     GUID activeProfile = GUID_NULL;
-    hr = profiles->GetActiveLanguageProfile(kVikeyClsid, &activeLanguage, &activeProfile);
-    profiles->Release();
+    HRESULT hr = g_profiles->GetActiveLanguageProfile(kVikeyClsid, &activeLanguage, &activeProfile);
     return SUCCEEDED(hr) && activeLanguage == language &&
         IsEqualGUID(activeProfile, kVikeyProfile);
 }
@@ -208,7 +206,18 @@ bool initialize() {
     g_registerServer = reinterpret_cast<RegisterServerFn>(GetProcAddress(g_tipModule, "DllRegisterServer"));
     if (!g_registerServer || !ensureRegistered(path)) { shutdown(); return false; }
 
-    // Profile activation requires a TSF thread manager on the calling thread.
+    // Register and enable the language profile before activating TSF on
+    // this thread. This follows the documented TSF profile activation order.
+    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&g_profiles));
+    if (FAILED(hr) || !g_profiles) { shutdown(); return false; }
+    LANGID currentLanguage = 0;
+    hr = g_profiles->GetCurrentLanguage(&currentLanguage);
+    if (FAILED(hr) || !currentLanguage || !ensureLanguageProfile(g_profiles, currentLanguage)) {
+        shutdown();
+        return false;
+    }
+
     hr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&g_threadMgr));
     if (FAILED(hr) || !g_threadMgr) { shutdown(); return false; }
@@ -226,7 +235,8 @@ bool sync(bool vietnameseEnabled) {
         return false;
     }
 
-    const LANGID language = currentThreadLanguage();
+    LANGID language = 0;
+    HRESULT hr = g_profiles ? g_profiles->GetCurrentLanguage(&language) : E_UNEXPECTED;
     const LANGID foreground = foregroundLanguage();
     // ActivateProfile requires the caller's current input language to match.
     // If an application has a different per-window keyboard layout, retain
@@ -242,19 +252,14 @@ bool sync(bool vietnameseEnabled) {
     // that Vikey is still the active keyboard profile.
     if (g_activeLanguage == language) g_activeLanguage = 0;
     deactivateActiveProfile();
-    ITfInputProcessorProfiles* profiles = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profiles));
-    if (FAILED(hr) || !profiles) return false;
-    const bool ready = ensureLanguageProfile(profiles, language);
+    if (FAILED(hr) || !g_profiles) return false;
+    const bool ready = ensureLanguageProfile(g_profiles, language);
     if (!ready) {
-        profiles->Release();
         std::fprintf(stderr, "[TsfController] language profile setup failed\\n");
         return false;
     }
 
-    hr = profiles->ActivateLanguageProfile(kVikeyClsid, language, kVikeyProfile);
-    profiles->Release();
+    hr = g_profiles->ActivateLanguageProfile(kVikeyClsid, language, kVikeyProfile);
     std::fprintf(stderr, "[TsfController] ActivateLanguageProfile: 0x%08lX\\n", static_cast<unsigned long>(hr));
     if (FAILED(hr) || !isActiveProfile(language)) return false;
 
@@ -269,6 +274,10 @@ void shutdown() {
         g_threadMgr->Release();
         g_threadMgr = nullptr;
         g_clientId = TF_CLIENTID_NULL;
+    }
+    if (g_profiles) {
+        g_profiles->Release();
+        g_profiles = nullptr;
     }
     g_ready = false;
     g_registerServer = nullptr;
