@@ -80,7 +80,11 @@ int wmain() {
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&textService));
     if (SUCCEEDED(tsfHr)) tsfHr = textService->ActivateEx(threadManager, tipClientId, 0);
     if (FAILED(tsfHr)) {
-        logLine("FAIL: explicit TIP activation on window test thread");
+        char diagnostic[192] = {};
+        snprintf(diagnostic, sizeof(diagnostic),
+            "FAIL: explicit TIP activation hr=0x%08lX appCid=%lu tipCid=%lu",
+            (unsigned long)tsfHr, (unsigned long)clientId, (unsigned long)tipClientId);
+        logLine(diagnostic);
         if (clientIdManager) clientIdManager->Release();
         if (textService) textService->Release();
         if (threadManager) { threadManager->Deactivate(); threadManager->Release(); }

@@ -337,7 +337,14 @@ int wmain() {
     hr = clientIdManager->GetClientId(CLSID_VikeyTextService, &tipClientId);
     clientIdManager->Release();
     clientIdManager = nullptr;
-    if (FAILED(hr)) { writeLog("FAIL: resolve TIP client ID"); goto Cleanup; }
+    if (FAILED(hr)) {
+        char diagnostic[160] = {};
+        snprintf(diagnostic, sizeof(diagnostic),
+            "FAIL: GetClientId hr=0x%08lX appCid=%lu",
+            (unsigned long)hr, (unsigned long)clientId);
+        writeLog(diagnostic);
+        goto Cleanup;
+    }
     hr = threadManager->CreateDocumentMgr(&documentManager);
     if (FAILED(hr)) { writeLog("FAIL: create document manager"); goto Cleanup; }
     TfEditCookie textStoreCookie = TF_INVALID_EDIT_COOKIE;
@@ -354,7 +361,14 @@ int wmain() {
                           IID_PPV_ARGS(&textService));
     if (FAILED(hr)) { writeLog("FAIL: CoCreateInstance(Vikey TIP)"); goto Cleanup; }
     hr = textService->ActivateEx(threadManager, tipClientId, 0);
-    if (FAILED(hr)) { writeLog("FAIL: TIP ActivateEx on test thread manager"); goto Cleanup; }
+    if (FAILED(hr)) {
+        char diagnostic[192] = {};
+        snprintf(diagnostic, sizeof(diagnostic),
+            "FAIL: TIP ActivateEx hr=0x%08lX appCid=%lu tipCid=%lu",
+            (unsigned long)hr, (unsigned long)clientId, (unsigned long)tipClientId);
+        writeLog(diagnostic);
+        goto Cleanup;
+    }
 
     hr = threadManager->QueryInterface(IID_PPV_ARGS(&keystrokes));
     if (FAILED(hr)) { writeLog("FAIL: query ITfKeystrokeMgr"); goto Cleanup; }

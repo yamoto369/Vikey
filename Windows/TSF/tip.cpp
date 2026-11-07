@@ -216,8 +216,12 @@ HRESULT VikeyTextService::ActivateEx(ITfThreadMgr* manager, TfClientId client, D
     settingsLoaded_ = false;
     ITfKeystrokeMgr* keyManager = nullptr;
     HRESULT hr = threadMgr_->QueryInterface(IID_PPV_ARGS(&keyManager));
+    VikeyTsfLog("tsf-tip.log", "query-keystroke-manager", hr,
+        (unsigned long)clientId_, 0);
     if (SUCCEEDED(hr)) {
         hr = keyManager->AdviseKeyEventSink(clientId_, this, TRUE);
+        VikeyTsfLog("tsf-tip.log", "advise-key-event-sink", hr,
+            (unsigned long)clientId_, 1);
         keyManager->Release();
     }
     if (FAILED(hr)) {
