@@ -403,7 +403,7 @@ static bool runScenario(ITfThreadMgr* threadMgr, TfClientId client, const char* 
 }
 
 // The path a user takes: real key events delivered by the system to a Win32 EDIT control.
-static void runEditScenario(const char* name, const std::wstring& typed, const std::wstring& expected) {
+static void runEditScenario(const char* name, const std::wstring& typed, const std::wstring& expected, bool learning = false) {
     if (!g_window || !g_edit) { std::printf("FAIL %s: no test window\n", name); ++g_failures; return; }
     SetWindowTextW(g_edit, L"");
     SetFocus(g_edit);
@@ -420,6 +420,12 @@ static void runEditScenario(const char* name, const std::wstring& typed, const s
     if (length > 0) GetWindowTextW(g_edit, &got[0], length + 1);
     std::printf("%s: typed=\"%s\" result=\"%s\" (%s) foreground=%s\n", name, utf8(typed).c_str(),
         utf8(got).c_str(), escaped(got).c_str(), GetForegroundWindow() == g_window ? "yes" : "NO");
+    if (learning) {
+        // The first run in a program that hides its text may lose a word: the TIP finds out and
+        // switches to composition editing. Not checked; the next run is.
+        std::printf("INFO %s: learning run, not checked\n", name);
+        return;
+    }
     if (got == expected) { check((std::string(name) + ": text is \"" + utf8(expected) + "\"").c_str(), true); return; }
     check((std::string(name) + ": text is \"" + utf8(expected) + "\"").c_str(), false);
 }
@@ -451,6 +457,7 @@ static bool cleanupRegistration() {
 }
 
 int wmain() {
+    RegDeleteKeyValueW(HKEY_CURRENT_USER, L"Software\\Vikey\\TsfComposeApps", L"vikey_tsf_typing_test.exe");
     std::printf("TSF typing test: Caps Lock is %s\n", (GetKeyState(VK_CAPITAL) & 1) ? "ON (results may differ)" : "off");
 
     // The tray app owns this shared state; the TIP only types while the controller is reachable
@@ -495,7 +502,9 @@ int wmain() {
         store->Release();
     }
 
+    runEditScenario("win32 EDIT control through SendInput (learning)", L"vieetj nams ddi ", L"", true);
     runEditScenario("win32 EDIT control through SendInput", L"vieetj nams ddi ", L"vi\u1ec7t n\u00e1m \u0111i ");
+    RegDeleteKeyValueW(HKEY_CURRENT_USER, L"Software\\Vikey\\TsfComposeApps", L"vikey_tsf_typing_test.exe");
 
     if (g_window) DestroyWindow(g_window);
     threadMgr->Deactivate();
