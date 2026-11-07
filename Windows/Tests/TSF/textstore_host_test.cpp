@@ -46,7 +46,7 @@ public:
         if (FAILED(hr)) return hr;
         const bool same = existing == unknown;
         existing->Release();
-        if (!same) return CONNECT_E_NOCONNECTION;
+        if (!same) return E_UNEXPECTED;
         sink_->Release();
         sink_ = nullptr;
         sinkMask_ = 0;

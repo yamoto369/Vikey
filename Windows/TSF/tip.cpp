@@ -36,7 +36,7 @@ bool isPassthroughWordBreak(WPARAM vk) {
 }
 bool isPrivateScope(ITfContext* context, TfEditCookie cookie, ITfRange* range) {
     ITfReadOnlyProperty* property = nullptr;
-    if (FAILED(context->GetAppProperty(GUID_PROP_INPUTSCOPE, &property)) || !property)
+    if (FAILED(context->GetAppProperty(GUID_VikeyInputScope, &property)) || !property)
         return false;
     VARIANT value; VariantInit(&value);
     bool privateInput = false;
