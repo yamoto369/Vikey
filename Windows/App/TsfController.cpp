@@ -87,23 +87,37 @@ bool isProcessorRegistered(ITfInputProcessorProfiles* profiles) {
     return found;
 }
 
-bool ensureLanguageProfile(ITfInputProcessorProfiles* profiles, LANGID language) {
-    BOOL enabled = FALSE;
-    HRESULT hr = profiles->IsEnabledLanguageProfile(kVikeyClsid, language, kVikeyProfile, &enabled);
-    if (FAILED(hr)) {
-        BSTR description = SysAllocString(L"Vikey Vietnamese Input");
-        if (!description) return false;
-        hr = profiles->AddLanguageProfile(kVikeyClsid, language, kVikeyProfile,
-            description, static_cast<ULONG>(SysStringLen(description)), nullptr, 0, 0);
-        SysFreeString(description);
-        if (FAILED(hr)) {
-            // Another Vikey instance or a previous interrupted startup may
-            // already have created the profile; re-query before failing.
-            enabled = FALSE;
-            hr = profiles->IsEnabledLanguageProfile(kVikeyClsid, language, kVikeyProfile, &enabled);
-            if (FAILED(hr)) return false;
+bool hasLanguageProfile(ITfInputProcessorProfiles* profiles, LANGID language) {
+    IEnumTfLanguageProfiles* enumerator = nullptr;
+    HRESULT hr = profiles->EnumLanguageProfiles(language, &enumerator);
+    if (FAILED(hr) || !enumerator) return false;
+    bool found = false;
+    TF_LANGUAGEPROFILE profile{};
+    ULONG fetched = 0;
+    while (enumerator->Next(1, &profile, &fetched) == S_OK && fetched == 1) {
+        if (IsEqualGUID(profile.clsid, kVikeyClsid) &&
+            IsEqualGUID(profile.guidProfile, kVikeyProfile)) {
+            found = true;
+            break;
         }
     }
+    enumerator->Release();
+    return found;
+}
+
+bool ensureLanguageProfile(ITfInputProcessorProfiles* profiles, LANGID language) {
+    if (!hasLanguageProfile(profiles, language)) {
+        BSTR description = SysAllocString(L"Vikey Vietnamese Input");
+        if (!description) return false;
+        HRESULT addHr = profiles->AddLanguageProfile(kVikeyClsid, language, kVikeyProfile,
+            description, static_cast<ULONG>(SysStringLen(description)), nullptr, 0, 0);
+        SysFreeString(description);
+        if (FAILED(addHr) && !hasLanguageProfile(profiles, language)) return false;
+    }
+
+    BOOL enabled = FALSE;
+    HRESULT hr = profiles->IsEnabledLanguageProfile(kVikeyClsid, language, kVikeyProfile, &enabled);
+    if (FAILED(hr)) return false;
     if (!enabled) {
         hr = profiles->EnableLanguageProfile(kVikeyClsid, language, kVikeyProfile, TRUE);
         if (FAILED(hr)) return false;
