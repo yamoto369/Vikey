@@ -82,29 +82,43 @@ int wmain(int argc, wchar_t** argv) {
                     if (threadMgrActivated) {
                         ITfKeystrokeMgr* queriedKeyMgr = nullptr;
                         HRESULT queryHr = threadMgr->QueryInterface(IID_PPV_ARGS(&queriedKeyMgr));
-                        std::printf("ITfThreadMgr::QueryInterface(ITfKeystrokeMgr) = 0x%08lX\\n",
-                            static_cast<unsigned long>(queryHr));
-                        std::printf("TSF clientId = 0x%08lX\\n", static_cast<unsigned long>(clientId));
                         check("thread manager exposes ITfKeystrokeMgr",
                             SUCCEEDED(queryHr) && queriedKeyMgr != nullptr);
+
+                        // ITfThreadMgr::Activate returns the application's client ID.
+                        // A text service receives a distinct ID associated with its CLSID.
+                        ITfClientId* clientIdManager = nullptr;
+                        HRESULT clientIdHr = threadMgr->QueryInterface(IID_PPV_ARGS(&clientIdManager));
+                        TfClientId serviceClientId = TF_CLIENTID_NULL;
+                        if (SUCCEEDED(clientIdHr) && clientIdManager) {
+                            clientIdHr = clientIdManager->GetClientId(clsid, &serviceClientId);
+                        }
+                        std::printf("Application clientId = 0x%08lX; text-service clientId = 0x%08lX\\n",
+                            static_cast<unsigned long>(clientId),
+                            static_cast<unsigned long>(serviceClientId));
+                        check("obtain distinct text-service client ID",
+                            SUCCEEDED(clientIdHr) && serviceClientId != TF_CLIENTID_NULL &&
+                            serviceClientId != clientId);
 
                         ITfKeyEventSink* directSink = nullptr;
                         HRESULT sinkHr = tip->QueryInterface(IID_PPV_ARGS(&directSink));
                         check("query direct diagnostic key sink", SUCCEEDED(sinkHr) && directSink != nullptr);
-                        if (SUCCEEDED(queryHr) && queriedKeyMgr && directSink) {
-                            HRESULT directAdviseHr = queriedKeyMgr->AdviseKeyEventSink(clientId, directSink, TRUE);
+                        if (SUCCEEDED(queryHr) && queriedKeyMgr && SUCCEEDED(clientIdHr) &&
+                            serviceClientId != TF_CLIENTID_NULL && directSink) {
+                            HRESULT directAdviseHr = queriedKeyMgr->AdviseKeyEventSink(serviceClientId, directSink, TRUE);
                             std::printf("Direct AdviseKeyEventSink HRESULT = 0x%08lX\\n",
                                 static_cast<unsigned long>(directAdviseHr));
-                            check("direct TSF key sink advise", SUCCEEDED(directAdviseHr));
+                            check("direct TSF key sink advise with text-service ID", SUCCEEDED(directAdviseHr));
                             if (SUCCEEDED(directAdviseHr)) {
                                 check("direct TSF key sink unadvise",
-                                    SUCCEEDED(queriedKeyMgr->UnadviseKeyEventSink(clientId)));
+                                    SUCCEEDED(queriedKeyMgr->UnadviseKeyEventSink(serviceClientId)));
                             }
                         }
                         if (directSink) directSink->Release();
                         if (queriedKeyMgr) queriedKeyMgr->Release();
+                        if (clientIdManager) clientIdManager->Release();
 
-                        hr = tip->Activate(threadMgr, clientId);
+                        hr = tip->Activate(threadMgr, serviceClientId);
                         std::printf("TIP Activate HRESULT = 0x%08lX\\n",
                             static_cast<unsigned long>(hr));
                         const bool tipActivated = SUCCEEDED(hr);
