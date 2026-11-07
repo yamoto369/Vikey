@@ -33,3 +33,8 @@ add_executable(vikey_input_policy_test ../Tests/input_policy_test.cpp)
 target_include_directories(vikey_input_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vikey_input_policy_test PRIVATE vikey_engine)
 target_compile_definitions(vikey_input_policy_test PRIVATE UNICODE _UNICODE)
+
+# Pure TSF context policy tests; no COM registration or desktop required.
+add_executable(vikey_tsf_policy_test ../Tests/tsf_policy_test.cpp)
+target_include_directories(vikey_tsf_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(vikey_tsf_policy_test PRIVATE UNICODE _UNICODE)
