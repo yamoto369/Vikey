@@ -48,6 +48,8 @@ static std::wstring siblingTipPath() {
 int wmain() {
     const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(init) && init != RPC_E_CHANGED_MODE) return 2;
+    HKL testLayout = LoadKeyboardLayoutW(L"00000409", KLF_ACTIVATE | KLF_SUBSTITUTE_OK);
+    if (testLayout) ActivateKeyboardLayout(testLayout, 0);
     HMODULE tip = LoadLibraryW(siblingTipPath().c_str());
     if (!tip) { logLine("SKIP: could not load built TSF TIP"); return 77; }
     using RegisterFn = HRESULT (STDAPICALLTYPE*)();
@@ -63,11 +65,14 @@ int wmain() {
         WS_POPUP | WS_VISIBLE | WS_BORDER | ES_MULTILINE,
         120, 120, 520, 160, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!window) { logLine("SKIP: RichEdit window unavailable"); FreeLibrary(tip); return 77; }
+    ShowWindow(window, SW_SHOW);
+    BringWindowToTop(window);
     SetForegroundWindow(window);
+    SetActiveWindow(window);
     SetFocus(window);
-    pumpMessagesFor(200);
-    if (GetForegroundWindow() != window) {
-        logLine("SKIP: runner did not grant foreground desktop access");
+    pumpMessagesFor(250);
+    if (GetForegroundWindow() != window || GetFocus() != window) {
+        logLine("SKIP: runner did not grant foreground keyboard focus");
         DestroyWindow(window);
         FreeLibrary(tip);
         return 77;
@@ -88,9 +93,11 @@ int wmain() {
     FreeLibrary(tip);
     if (sent != 10) { logLine("SKIP: SendInput did not deliver all key events"); return 77; }
     if (std::wstring(text) != L"viét") {
-        char diagnostic[128] = {};
-        snprintf(diagnostic, sizeof(diagnostic), "FAIL: RichEdit text mismatch (sent=%u, length=%u)",
-            sent, (unsigned)wcslen(text));
+        char diagnostic[192] = {};
+        snprintf(diagnostic, sizeof(diagnostic),
+            "FAIL: RichEdit text mismatch (sent=%u length=%u chars=%04X,%04X,%04X,%04X,%04X)",
+            sent, (unsigned)wcslen(text), (unsigned)text[0], (unsigned)text[1],
+            (unsigned)text[2], (unsigned)text[3], (unsigned)text[4]);
         logLine(diagnostic);
         return 1;
     }

@@ -76,43 +76,90 @@ HRESULT addProfile(ITfInputProcessorProfiles* profiles, LANGID language) {
         L"Vikey", 5, nullptr, 0, 0);
 }
 HRESULT registerProfiles() {
-    ITfInputProcessorProfiles* profiles = nullptr;
+    ITfInputProcessorProfiles* legacyProfiles = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profiles));
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&legacyProfiles));
     if (FAILED(hr)) return hr;
-    BSTR existing = nullptr;
-    HRESULT profileExists = profiles->GetLanguageProfileDescription(
-        CLSID_VikeyTextService, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
-        GUID_VikeyProfile, &existing);
-    if (existing) { SysFreeString(existing); existing = nullptr; }
-    if (FAILED(profileExists)) {
-        profileExists = profiles->GetLanguageProfileDescription(
-            CLSID_VikeyTextService, MAKELANGID(LANG_VIETNAMESE, SUBLANG_DEFAULT),
-            GUID_VikeyProfile, &existing);
-        if (existing) SysFreeString(existing);
+
+    ITfInputProcessorProfileMgr* profileManager = nullptr;
+    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profileManager));
+    if (FAILED(hr)) {
+        legacyProfiles->Release();
+        return hr;
     }
-    if (FAILED(profileExists)) hr = profiles->Register(CLSID_VikeyTextService);
+
+    HMODULE module = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&registerProfiles), &module);
+    wchar_t dllPath[MAX_PATH] = {};
+    const DWORD pathLength = GetModuleFileNameW(module, dllPath, ARRAYSIZE(dllPath));
+    if (!pathLength || pathLength >= ARRAYSIZE(dllPath)) {
+        profileManager->Release();
+        legacyProfiles->Release();
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
     const LANGID languages[] = {
         MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
         MAKELANGID(LANG_VIETNAMESE, SUBLANG_DEFAULT)
     };
-    for (LANGID language : languages) if (SUCCEEDED(hr)) hr = addProfile(profiles, language);
+    for (LANGID language : languages) {
+        BSTR description = nullptr;
+        const HRESULT exists = legacyProfiles->GetLanguageProfileDescription(
+            CLSID_VikeyTextService, language, GUID_VikeyProfile, &description);
+        if (description) {
+            SysFreeString(description);
+            description = nullptr;
+        }
+
+        if (exists == S_OK) {
+            hr = legacyProfiles->EnableLanguageProfile(
+                CLSID_VikeyTextService, language, GUID_VikeyProfile, TRUE);
+        } else {
+            hr = profileManager->RegisterProfile(
+                CLSID_VikeyTextService, language, GUID_VikeyProfile,
+                L"Vikey", 5, dllPath, pathLength, 0,
+                nullptr, 0, TRUE, 0);
+        }
+        if (FAILED(hr)) break;
+    }
+
     if (SUCCEEDED(hr)) {
         ITfCategoryMgr* categories = nullptr;
-        if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&categories)))) {
-            categories->RegisterCategory(CLSID_VikeyTextService, GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyCategory);
+        hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&categories));
+        if (SUCCEEDED(hr) && categories) {
+            HRESULT categoryResult = categories->RegisterCategory(
+                CLSID_VikeyTextService, GUID_TFCAT_TIP_KEYBOARD, CLSID_VikeyTextService);
+            if (FAILED(categoryResult) && categoryResult != TF_E_ALREADY_EXISTS)
+                hr = categoryResult;
             categories->Release();
         }
-        const LANGID userLanguage = GetUserDefaultLangID();
-        const LANGID activeLanguage = PRIMARYLANGID(userLanguage) == LANG_VIETNAMESE
-            ? MAKELANGID(LANG_VIETNAMESE, SUBLANG_DEFAULT)
-            : MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
-        hr = profiles->ActivateLanguageProfile(CLSID_VikeyTextService, activeLanguage, GUID_VikeyProfile);
     }
-    profiles->Release();
+
+    if (SUCCEEDED(hr)) {
+        // DONTCARECURRENTINPUTLANGUAGE avoids failing on machines whose current
+        // keyboard layout is not the profile's language. TSF activates it when
+        // English/Vietnamese becomes the current input language.
+        const LANGID currentLanguage = LOWORD((DWORD_PTR)GetKeyboardLayout(0));
+        const LANGID targetLanguage =
+            PRIMARYLANGID(currentLanguage) == LANG_VIETNAMESE
+                ? MAKELANGID(LANG_VIETNAMESE, SUBLANG_DEFAULT)
+                : MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
+        const DWORD flags =
+            TF_IPPMF_FORSESSION | TF_IPPMF_ENABLEPROFILE |
+            TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE;
+        hr = profileManager->ActivateProfile(
+            TF_PROFILETYPE_INPUTPROCESSOR, CLSID_VikeyTextService,
+            targetLanguage, GUID_VikeyProfile, nullptr, flags);
+        logRegistration(SUCCEEDED(hr) ? "activate-profile" : "activate-profile-failed", hr);
+    }
+
+    profileManager->Release();
+    legacyProfiles->Release();
     return hr;
-}
 }
 extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer() {
     HRESULT hr = registerComClass();
@@ -141,7 +188,7 @@ extern "C" __declspec(dllexport) HRESULT __stdcall DllUnregisterServer() {
         if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
             CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&categories)))) {
             categories->UnregisterCategory(CLSID_VikeyTextService,
-                GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyCategory);
+                GUID_TFCAT_TIP_KEYBOARD, CLSID_VikeyTextService);
             categories->Release();
         }
         RegDeleteTreeW(HKEY_CURRENT_USER,

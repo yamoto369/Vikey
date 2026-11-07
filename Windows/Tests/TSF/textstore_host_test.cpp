@@ -300,6 +300,9 @@ int wmain() {
     using UnregisterFn = HRESULT (STDAPICALLTYPE*)();
     const auto registerTip = reinterpret_cast<RegisterFn>(GetProcAddress(tipModule, "DllRegisterServer"));
     const auto unregisterTip = reinterpret_cast<UnregisterFn>(GetProcAddress(tipModule, "DllUnregisterServer"));
+    // Make the current keyboard LANGID deterministic across x64 and ARM64 hosted runners.
+    HKL testLayout = LoadKeyboardLayoutW(L"00000409", KLF_ACTIVATE | KLF_SUBSTITUTE_OK);
+    if (testLayout) ActivateKeyboardLayout(testLayout, 0);
     HRESULT hr = registerTip ? registerTip() : E_NOINTERFACE;
     if (FAILED(hr)) {
         writeLog("FAIL: DllRegisterServer");
@@ -347,13 +350,23 @@ int wmain() {
             BOOL eaten = FALSE;
             hr = keystrokes->TestKeyDown(key, 0, &eaten);
             if (FAILED(hr) || !eaten) {
-                writeLog("FAIL: TSF TestKeyDown did not claim a Telex key");
+                char diagnostic[192] = {};
+                snprintf(diagnostic, sizeof(diagnostic),
+                    "FAIL: TestKeyDown key=0x%02X hr=0x%08lX eaten=%d",
+                    (unsigned)key, (unsigned long)hr, eaten ? 1 : 0);
+                writeLog(diagnostic);
+                hr = FAILED(hr) ? hr : E_FAIL;
                 goto Cleanup;
             }
             eaten = FALSE;
             hr = keystrokes->KeyDown(key, 0, &eaten);
             if (FAILED(hr) || !eaten) {
-                writeLog("FAIL: TSF KeyDown did not consume a Telex key");
+                char diagnostic[192] = {};
+                snprintf(diagnostic, sizeof(diagnostic),
+                    "FAIL: KeyDown key=0x%02X hr=0x%08lX eaten=%d",
+                    (unsigned)key, (unsigned long)hr, eaten ? 1 : 0);
+                writeLog(diagnostic);
+                hr = FAILED(hr) ? hr : E_FAIL;
                 goto Cleanup;
             }
         }

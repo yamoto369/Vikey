@@ -244,28 +244,39 @@ HRESULT VikeyTextService::Deactivate() {
 }
 HRESULT VikeyTextService::OnSetFocus(BOOL) { return S_OK; }
 
-bool VikeyTextService::IsKeyboardDisabled() const {
-    if (!threadMgr_) return true;
+bool VikeyTextService::IsKeyboardDisabled(ITfContext* context) const {
+    if (!threadMgr_ || !context) return true;
+
+    // A focused document with a top context is a valid input target even when it is a
+    // windowless ITextStoreACP. Do not infer "empty" from the absence of an HWND.
+    ITfDocumentMgr* focusedDocument = nullptr;
+    if (FAILED(threadMgr_->GetFocus(&focusedDocument)) || !focusedDocument) return true;
+    ITfContext* topContext = nullptr;
+    const HRESULT topResult = focusedDocument->GetTop(&topContext);
+    const bool hasTopContext = SUCCEEDED(topResult) && topContext != nullptr;
+    if (topContext) topContext->Release();
+    focusedDocument->Release();
+    if (!hasTopContext) return true;
+
+    // GUID_COMPARTMENT_EMPTYCONTEXT can be set for windowless stores that still have
+    // a valid document context. The explicit focus-stack check above is authoritative.
     ITfCompartmentMgr* compartments = nullptr;
-    if (FAILED(threadMgr_->QueryInterface(IID_PPV_ARGS(&compartments))) || !compartments) return false;
+    if (FAILED(threadMgr_->QueryInterface(IID_PPV_ARGS(&compartments))) || !compartments)
+        return false;
+    ITfCompartment* compartment = nullptr;
     bool disabled = false;
-    const GUID* ids[] = { &GUID_COMPARTMENT_KEYBOARD_DISABLED, &GUID_COMPARTMENT_EMPTYCONTEXT };
-    for (const GUID* id : ids) {
-        ITfCompartment* compartment = nullptr;
-        if (SUCCEEDED(compartments->GetCompartment(*id, &compartment)) && compartment) {
-            VARIANT value; VariantInit(&value);
-            if (SUCCEEDED(compartment->GetValue(&value)) &&
-                ((value.vt == VT_I4 && value.lVal != 0) ||
-                 (value.vt == VT_UI4 && value.ulVal != 0))) {
-                disabled = true;
-                VikeyTsfLog("tsf-tip.log", "keyboard-compartment-set", S_OK,
-                    IsEqualGUID(*id, GUID_COMPARTMENT_KEYBOARD_DISABLED) ? 1UL : 2UL,
-                    value.vt == VT_I4 ? (unsigned long)value.lVal : (unsigned long)value.ulVal);
-            }
-            VariantClear(&value);
-            compartment->Release();
+    if (SUCCEEDED(compartments->GetCompartment(
+            GUID_COMPARTMENT_KEYBOARD_DISABLED, &compartment)) && compartment) {
+        VARIANT value; VariantInit(&value);
+        if (SUCCEEDED(compartment->GetValue(&value)) &&
+            ((value.vt == VT_I4 && value.lVal != 0) ||
+             (value.vt == VT_UI4 && value.ulVal != 0))) {
+            disabled = true;
+            VikeyTsfLog("tsf-tip.log", "keyboard-disabled", S_OK,
+                value.vt == VT_I4 ? (unsigned long)value.lVal : (unsigned long)value.ulVal);
         }
-        if (disabled) break;
+        VariantClear(&value);
+        compartment->Release();
     }
     compartments->Release();
     return disabled;
@@ -355,7 +366,7 @@ HRESULT VikeyTextService::OnTestKeyDown(ITfContext* context, WPARAM vk, LPARAM, 
         VikeyTsfLog("tsf-tip.log", "test-key-no-context", E_UNEXPECTED, (unsigned long)vk);
         return S_OK;
     }
-    if (IsKeyboardDisabled()) {
+    if (IsKeyboardDisabled(context)) {
         VikeyTsfLog("tsf-tip.log", "test-key-disabled", S_OK, (unsigned long)vk);
         return S_OK;
     }
@@ -382,7 +393,7 @@ HRESULT VikeyTextService::OnKeyDown(ITfContext* context, WPARAM vk, LPARAM flags
 }
 HRESULT VikeyTextService::ProcessKey(ITfContext* context, WPARAM vk, LPARAM, BOOL* eaten) {
     if (!context || !active_) return E_INVALIDARG;
-    if (IsKeyboardDisabled() || IsBlacklistedContext(context)) {
+    if (IsKeyboardDisabled(context) || IsBlacklistedContext(context)) {
         driver_.resetContext();
         return S_OK;
     }

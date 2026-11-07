@@ -35,7 +35,7 @@ private:
 
     HRESULT ProcessKey(ITfContext* context, WPARAM vk, LPARAM flags, BOOL* eaten);
     void SyncSettingsAndContext(ITfContext* context);
-    bool IsKeyboardDisabled() const;
+    bool IsKeyboardDisabled(ITfContext* context) const;
     bool IsBlacklistedContext(ITfContext* context) const;
     bool MatchesSwitchHotkey(WPARAM vk) const;
     void PersistLanguage(bool notifyTray);
