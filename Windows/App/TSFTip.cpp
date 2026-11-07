@@ -47,7 +47,7 @@ static void tipNote(unsigned id, const wchar_t* text) {
 // Per-key detail, bounded so a long typing session cannot grow the log without limit.
 static void tipTrace(const wchar_t* text) {
     static std::atomic<unsigned> lines{0};
-    if (lines.fetch_add(1) >= 60) return;
+    if (lines.fetch_add(1) >= 600) return;
     writeTipLine(text);
 }
 
