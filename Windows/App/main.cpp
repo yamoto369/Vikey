@@ -212,7 +212,9 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
+    int helperExit = 0;
+    if (vikey::tsf::handleRegistrationCommand(cmdLine, &helperExit)) return helperExit;   // elevated TSF registration helper: no tray, no single-instance check
     vikey::crash::install();           // a crash leaves a text report (no typed text) for the next launch
     vikey::crash::selfTestIfAsked();   // hidden: --crash-self-test
     HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\VikeyRunning");

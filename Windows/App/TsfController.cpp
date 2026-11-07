@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <msctf.h>
 #include <objbase.h>
+#include <shellapi.h>
+#include <cwchar>
 #include <string>
 
 namespace {
@@ -145,6 +147,76 @@ bool ensureKeyboardCategory() {
     return SUCCEEDED(hr);
 }
 
+bool isProcessElevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = 0;
+    const bool elevated = GetTokenInformation(token, TokenElevation, &elevation,
+        sizeof(elevation), &size) && elevation.TokenIsElevated;
+    CloseHandle(token);
+    return elevated;
+}
+
+// Remembers that the user refused the UAC prompt, so Vikey does not ask again
+// on every launch. Running Vikey as administrator once registers TSF anyway.
+const wchar_t kPrefsKey[] = L"Software\\Vikey";
+const wchar_t kElevationDeclinedValue[] = L"TsfElevationDeclined";
+
+bool elevationDeclined() {
+    DWORD value = 0, size = sizeof(value);
+    return RegGetValueW(HKEY_CURRENT_USER, kPrefsKey, kElevationDeclinedValue,
+        RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS && value != 0;
+}
+
+void setElevationDeclined(bool declined) {
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kPrefsKey, 0, nullptr, 0, KEY_SET_VALUE,
+            nullptr, &key, nullptr) != ERROR_SUCCESS) return;
+    if (declined) {
+        const DWORD value = 1;
+        RegSetValueExW(key, kElevationDeclinedValue, 0, REG_DWORD,
+            reinterpret_cast<const BYTE*>(&value), sizeof(value));
+    } else {
+        RegDeleteValueW(key, kElevationDeclinedValue);
+    }
+    RegCloseKey(key);
+}
+
+// ITfInputProcessorProfiles::Register, AddLanguageProfile and RegisterCategory
+// write the text service under HKLM\SOFTWARE\Microsoft\CTF\TIP. A standard
+// (non-elevated) process gets E_FAIL with no Win32 error, so this one-time
+// step runs in an elevated copy of this executable (--register-tsf=<langid>).
+bool registerViaElevatedHelper(LANGID language) {
+    wchar_t exe[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (!n || n >= MAX_PATH) return false;
+    wchar_t params[64] = {};
+    swprintf_s(params, _countof(params), L"--register-tsf=%04X", static_cast<unsigned>(language));
+
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    info.lpVerb = L"runas";
+    info.lpFile = exe;
+    info.lpParameters = params;
+    info.nShow = SW_HIDE;
+    vikey::tsf::diagnostics::write(L"Requesting administrator rights to register the TSF text service");
+    if (!ShellExecuteExW(&info) || !info.hProcess) {
+        const DWORD error = GetLastError();
+        vikey::tsf::diagnostics::result(L"Elevated TSF registration could not start", HRESULT_FROM_WIN32(error), error);
+        if (error == ERROR_CANCELLED) setElevationDeclined(true);
+        return false;
+    }
+    const DWORD wait = WaitForSingleObject(info.hProcess, 60000);
+    DWORD exitCode = 1;
+    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(info.hProcess, &exitCode);
+    CloseHandle(info.hProcess);
+    vikey::tsf::diagnostics::result(L"Elevated TSF registration exit code",
+        exitCode == 0 ? S_OK : E_FAIL, exitCode);
+    return wait == WAIT_OBJECT_0 && exitCode == 0;
+}
+
 bool ensureRegistered(const std::wstring& dllPath) {
     vikey::tsf::diagnostics::write((L"Registering COM class for DLL: " + dllPath).c_str());
     HRESULT hr = updateComClassPath(dllPath);
@@ -157,14 +229,35 @@ bool ensureRegistered(const std::wstring& dllPath) {
 
     if (!isProcessorRegistered(profiles)) {
         if (!g_registerServer) { vikey::tsf::diagnostics::write(L"DllRegisterServer export missing"); profiles->Release(); return false; }
-        const HRESULT registerHr = g_registerServer();
-        vikey::tsf::diagnostics::result(L"DllRegisterServer", registerHr);
-        if (FAILED(registerHr)) { profiles->Release(); return false; }
-        profiles->Release();
-        profiles = nullptr;
+        if (isProcessElevated()) {
+            setElevationDeclined(false);
+            const HRESULT registerHr = g_registerServer();
+            vikey::tsf::diagnostics::result(L"DllRegisterServer", registerHr);
+            if (FAILED(registerHr)) { profiles->Release(); return false; }
+        } else {
+            LANGID current = 0;
+            profiles->GetCurrentLanguage(&current);
+            profiles->Release();
+            profiles = nullptr;
+            vikey::tsf::diagnostics::write(L"Process is not elevated; TSF text service registration needs administrator rights");
+            if (elevationDeclined()) {
+                vikey::tsf::diagnostics::write(L"Administrator prompt was declined earlier; run Vikey as administrator once to register TSF");
+                return false;
+            }
+            if (!registerViaElevatedHelper(current)) return false;
+            // A failed attempt may have removed the per-user COM path; write it again.
+            if (FAILED(updateComClassPath(dllPath))) return false;
+            setElevationDeclined(false);
+        }
+        if (profiles) { profiles->Release(); profiles = nullptr; }
         hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&profiles));
         if (FAILED(hr) || !profiles) { vikey::tsf::diagnostics::result(L"Recreate TSF profiles manager failed", hr); return false; }
+        if (!isProcessorRegistered(profiles)) {
+            vikey::tsf::diagnostics::write(L"Vikey is still not registered with TSF after registration");
+            profiles->Release();
+            return false;
+        }
     } else {
         vikey::tsf::diagnostics::write(L"COM input processor already registered");
     }
@@ -213,6 +306,62 @@ bool deactivateActiveProfile() {
 }
 
 namespace vikey { namespace tsf {
+// Handles "--register-tsf=<hex langid>" in the elevated helper process. Only
+// the DLL beside this executable is registered; no path is taken from the
+// command line, so the elevated process never loads an arbitrary DLL.
+bool handleRegistrationCommand(const wchar_t* commandLine, int* exitCode) {
+    static const wchar_t kFlag[] = L"--register-tsf=";
+    const wchar_t* arg = commandLine ? wcsstr(commandLine, kFlag) : nullptr;
+    if (!arg) return false;
+    *exitCode = 1;
+    wchar_t* end = nullptr;
+    const unsigned long langValue = wcstoul(arg + _countof(kFlag) - 1, &end, 16);
+    const LANGID requested = langValue <= 0xFFFF ? static_cast<LANGID>(langValue) : 0;
+    vikey::tsf::diagnostics::write(L"========== Elevated TSF registration started ==========");
+    if (!isProcessElevated()) { vikey::tsf::diagnostics::write(L"Registration helper is not elevated"); return true; }
+
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    vikey::tsf::diagnostics::result(L"Helper CoInitializeEx", comHr);
+    if (FAILED(comHr)) return true;
+    const std::wstring path = modulePath();
+    HMODULE module = path.empty() ? nullptr : LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    auto registerServer = module ? reinterpret_cast<RegisterServerFn>(GetProcAddress(module, "DllRegisterServer")) : nullptr;
+    if (!registerServer) {
+        vikey::tsf::diagnostics::write(L"Helper cannot load DllRegisterServer");
+    } else {
+        const HRESULT registerHr = registerServer();
+        vikey::tsf::diagnostics::result(L"Helper DllRegisterServer", registerHr);
+        bool ok = SUCCEEDED(registerHr);
+        if (ok) {
+            // AddLanguageProfile is also machine-wide, so add the profiles the
+            // user's session needs now: Vietnamese, US English and the current language.
+            ITfInputProcessorProfiles* profiles = nullptr;
+            const HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profiles));
+            if (FAILED(hr) || !profiles) { vikey::tsf::diagnostics::result(L"Helper profiles manager failed", hr); ok = false; }
+            else {
+                const LANGID languages[] = { 0x042A, 0x0409, requested };
+                for (LANGID language : languages) {
+                    if (!language || hasLanguageProfile(profiles, language)) continue;
+                    BSTR description = SysAllocString(L"Vikey Vietnamese Input");
+                    if (!description) { ok = false; continue; }
+                    const HRESULT addHr = profiles->AddLanguageProfile(kVikeyClsid, language, kVikeyProfile,
+                        description, static_cast<ULONG>(SysStringLen(description)), nullptr, 0, 0);
+                    SysFreeString(description);
+                    vikey::tsf::diagnostics::result(L"Helper AddLanguageProfile", addHr, language);
+                    if (FAILED(addHr)) ok = false;
+                }
+                profiles->Release();
+            }
+        }
+        if (ok) *exitCode = 0;
+    }
+    if (module) FreeLibrary(module);
+    CoUninitialize();
+    vikey::tsf::diagnostics::write(*exitCode == 0 ? L"Elevated TSF registration succeeded" : L"Elevated TSF registration failed");
+    return true;
+}
+
 bool initialize() {
     if (g_ready) { vikey::tsf::diagnostics::write(L"initialize called: already ready"); return true; }
     vikey::tsf::diagnostics::write(L"========== TSF initialization started ==========");
