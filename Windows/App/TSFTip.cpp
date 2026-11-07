@@ -3,6 +3,7 @@
 #include "KeyMap.h"
 #include "TSFPolicy.h"
 #include "TsfEngineRuntime.h"
+#include "TsfDiagnostics.h"
 #include <inputscope.h>
 #include <vector>
 #include <string>
@@ -382,15 +383,30 @@ const GUID GUID_VikeyProfile =
 { 0x4e7c1a26, 0x8d39, 0x4f51, { 0xb2, 0x07, 0x61, 0x33, 0x9a, 0xc8, 0x42, 0x15 } };
 
 static HRESULT registerComClass() {
+    vikey::tsf::diagnostics::write(L"DllRegisterServer: registerComClass started");
     wchar_t module[MAX_PATH] = {};
-    if (!GetModuleFileNameW(g_module, module, MAX_PATH)) return HRESULT_FROM_WIN32(GetLastError());
+    if (!GetModuleFileNameW(g_module, module, MAX_PATH)) {
+        const DWORD error = GetLastError();
+        const HRESULT hr = HRESULT_FROM_WIN32(error);
+        vikey::tsf::diagnostics::result(L"DllRegisterServer GetModuleFileNameW", hr, error);
+        return hr;
+    }
     wchar_t clsid[64] = {};
-    if (StringFromGUID2(CLSID_VikeyTextService, clsid, 64) == 0) return E_FAIL;
+    if (StringFromGUID2(CLSID_VikeyTextService, clsid, 64) == 0) {
+        vikey::tsf::diagnostics::write(L"DllRegisterServer StringFromGUID2 failed");
+        return E_FAIL;
+    }
     wchar_t keyPath[128] = {};
-    if (swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s\\InprocServer32", clsid) < 0) return E_FAIL;
+    if (swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s\\InprocServer32", clsid) < 0) {
+        vikey::tsf::diagnostics::write(L"DllRegisterServer registry path formatting failed");
+        return E_FAIL;
+    }
     HKEY key = nullptr;
     LONG error = RegCreateKeyExW(HKEY_CURRENT_USER, (std::wstring(L"Software\\Classes") + L"\\" + keyPath).c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
-    if (error != ERROR_SUCCESS) return HRESULT_FROM_WIN32(error);
+    if (error != ERROR_SUCCESS) {
+        vikey::tsf::diagnostics::result(L"DllRegisterServer RegCreateKeyExW", HRESULT_FROM_WIN32(error), error);
+        return HRESULT_FROM_WIN32(error);
+    }
     error = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(module),
         static_cast<DWORD>((wcslen(module) + 1) * sizeof(wchar_t)));
     if (error == ERROR_SUCCESS) {
@@ -399,45 +415,63 @@ static HRESULT registerComClass() {
             reinterpret_cast<const BYTE*>(model), sizeof(model));
     }
     RegCloseKey(key);
-    return HRESULT_FROM_WIN32(error);
+    const HRESULT hr = HRESULT_FROM_WIN32(error);
+    vikey::tsf::diagnostics::result(L"DllRegisterServer registerComClass registry write", hr, error);
+    return hr;
 }
 
 extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
+    vikey::tsf::diagnostics::write(L"DllRegisterServer entered");
     HRESULT hr = registerComClass();
+    vikey::tsf::diagnostics::result(L"DllRegisterServer registerComClass", hr);
     if (FAILED(hr)) return hr;
+
     ITfInputProcessorProfiles* profiles = nullptr;
     hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
         IID_ITfInputProcessorProfiles, reinterpret_cast<void**>(&profiles));
+    vikey::tsf::diagnostics::result(L"DllRegisterServer CoCreateInstance(InputProcessorProfiles)", hr);
     if (SUCCEEDED(hr)) {
         hr = profiles->Register(CLSID_VikeyTextService);
+        vikey::tsf::diagnostics::result(L"DllRegisterServer ITfInputProcessorProfiles::Register", hr);
         if (SUCCEEDED(hr)) {
             BSTR description = SysAllocString(L"Vikey Vietnamese Input");
-            if (!description) hr = E_OUTOFMEMORY;
-            else {
+            if (!description) {
+                hr = E_OUTOFMEMORY;
+                vikey::tsf::diagnostics::result(L"DllRegisterServer SysAllocString", hr);
+            } else {
                 hr = profiles->AddLanguageProfile(CLSID_VikeyTextService, 0x042A,
                     GUID_VikeyProfile, description, static_cast<ULONG>(wcslen(description)),
                     nullptr, 0, 0);
+                vikey::tsf::diagnostics::result(L"DllRegisterServer AddLanguageProfile(vi-VN)", hr);
                 SysFreeString(description);
             }
         }
         profiles->Release();
     }
+
     if (SUCCEEDED(hr)) {
         ITfCategoryMgr* categories = nullptr;
         hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
             IID_ITfCategoryMgr, reinterpret_cast<void**>(&categories));
+        vikey::tsf::diagnostics::result(L"DllRegisterServer CoCreateInstance(CategoryMgr)", hr);
         if (SUCCEEDED(hr)) {
             hr = categories->RegisterCategory(CLSID_VikeyTextService,
                 GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyProfile);
+            vikey::tsf::diagnostics::result(L"DllRegisterServer RegisterCategory(keyboard)", hr);
             categories->Release();
         }
     }
+
+    vikey::tsf::diagnostics::result(L"DllRegisterServer final result", hr);
     if (FAILED(hr)) {
+        vikey::tsf::diagnostics::write(L"DllRegisterServer failed; removing partial CLSID registration");
         wchar_t clsid[64] = {};
         StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
         wchar_t keyPath[128] = {};
         swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s", clsid);
         RegDeleteTreeW(HKEY_CURRENT_USER, (std::wstring(L"Software\\Classes") + L"\\" + keyPath).c_str());
+    } else {
+        vikey::tsf::diagnostics::write(L"DllRegisterServer completed successfully");
     }
     return hr;
 }
