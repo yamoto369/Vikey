@@ -40,6 +40,25 @@ int main() {
     expect("blacklist_non_member", isBlacklisted(L"notepad.exe", entries), false);
     expect("blacklist_empty_name", isBlacklisted(L"", entries), false);
     expect("blacklist_empty_list", isBlacklisted(L"cmd.exe", {}), false);
+
+    // Typing-log security policy: disabled by setting, password/unknown focus, or sensitive app.
+    expect("log_enabled_plain_app", allowsTypingLog(L"notepad.exe", true, false), true);
+    expect("log_disabled_setting", allowsTypingLog(L"notepad.exe", false, false), false);
+    expect("log_password_focus", allowsTypingLog(L"notepad.exe", true, true), false);
+    expect("log_unknown_focus_fails_closed", allowsTypingLog(L"notepad.exe", true, true), false);
+    expect("log_empty_app_fails_closed", allowsTypingLog(L"", true, false), false);
+    const wchar_t* sensitive[] = {
+        L"1password.exe", L"bitwarden.exe", L"keepassxc.exe", L"keepass.exe", L"lastpass.exe", L"dashlane.exe", L"enpass.exe", L"nordpass.exe",
+        L"windowsterminal.exe", L"cmd.exe", L"powershell.exe", L"pwsh.exe", L"putty.exe", L"wezterm-gui.exe", L"alacritty.exe", L"conhost.exe", L"openconsole.exe", L"termius.exe"
+    };
+    for (const auto* app : sensitive) {
+        std::wstring label = L"log_excluded_";
+        label += app;
+        std::string name(label.begin(), label.end());
+        expect(name.c_str(), allowsTypingLog(app, true, false), false);
+    }
+    expect("log_excluded_app_path", allowsTypingLog(L"C:\\Windows\\System32\\CMD.EXE", true, false), false);
+    expect("log_case_insensitive_exclusion", allowsTypingLog(L"PowerShell.EXE", true, false), false);
     std::printf("Windows input policy: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }
