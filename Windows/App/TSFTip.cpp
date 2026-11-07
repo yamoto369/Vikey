@@ -222,23 +222,44 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
 
 extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
     HRESULT result = S_OK;
+
+    // Release any TSF-created TIP instance before removing its registration.
+    // Unregistering a service while TSF still owns an activated instance can
+    // fail even after the application's thread manager has been deactivated.
+    ITfInputProcessorProfileMgr* profileMgr = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfileMgr, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profileMgr));
+    if (SUCCEEDED(hr)) {
+        hr = profileMgr->ReleaseInputProcessor(CLSID_VikeyTextService, 0);
+        if (FAILED(hr)) result = hr;
+        profileMgr->Release();
+    } else {
+        result = hr;
+    }
+
     ITfInputProcessorProfiles* profiles = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfInputProcessorProfiles, reinterpret_cast<void**>(&profiles));
+    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&profiles));
     if (SUCCEEDED(hr)) {
         hr = profiles->Unregister(CLSID_VikeyTextService);
-        if (FAILED(hr)) result = hr;
+        if (FAILED(hr) && SUCCEEDED(result)) result = hr;
         profiles->Release();
-    } else result = hr;
+    } else if (SUCCEEDED(result)) {
+        result = hr;
+    }
+
     ITfCategoryMgr* categories = nullptr;
     hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfCategoryMgr, reinterpret_cast<void**>(&categories));
+        IID_PPV_ARGS(&categories));
     if (SUCCEEDED(hr)) {
         hr = categories->UnregisterCategory(CLSID_VikeyTextService,
             GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyProfile);
         if (FAILED(hr) && SUCCEEDED(result)) result = hr;
         categories->Release();
-    } else if (SUCCEEDED(result)) result = hr;
+    } else if (SUCCEEDED(result)) {
+        result = hr;
+    }
+
     wchar_t clsid[64] = {};
     StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
     wchar_t keyPath[128] = {};
