@@ -135,13 +135,8 @@ void clearTypingLog() {
     std::wstring path = typingLogPath(); DeleteFileW(path.c_str()); DeleteFileW((path.substr(0, path.size() - 6) + L".1.jsonl").c_str());
 }
 static bool TLKeysAllowed() {
-    static const wchar_t* excluded[] = { // password managers and terminals (sudo/ssh passwords are typed in plain view of the hook)
-        L"1password.exe", L"bitwarden.exe", L"keepassxc.exe", L"keepass.exe", L"lastpass.exe", L"dashlane.exe", L"enpass.exe", L"nordpass.exe",
-        L"windowsterminal.exe", L"cmd.exe", L"powershell.exe", L"pwsh.exe", L"putty.exe", L"wezterm-gui.exe", L"alacritty.exe", L"conhost.exe", L"openconsole.exe", L"termius.exe" };
-    std::wstring app = _tlApp; std::transform(app.begin(), app.end(), app.begin(), ::towlower);
-    for (auto e : excluded) if (app == e) return false;
-    if (site::focusedIsPassword()) return false;   // like secure input on macOS: never the keys of a password field
-    return vTypingLogKeys != 0;
+    // Unknown focus is treated as password by site::focusedIsPassword(): fail closed until UIA answers.
+    return input::allowsTypingLog(_tlApp, vTypingLogKeys != 0, site::focusedIsPassword());
 }
 static void TLWrite(std::string fields) {
     if (!vTypingLogEnabled) return;
