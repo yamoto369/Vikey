@@ -34,12 +34,24 @@ static bool cleanupRegistration() {
 }
 
 int wmain() {
+    HWND foreground = GetForegroundWindow();
+    DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+    const LANGID currentLanguage = LOWORD(reinterpret_cast<ULONG_PTR>(GetKeyboardLayout(GetCurrentThreadId())));
+    const LANGID foregroundLanguage = LOWORD(reinterpret_cast<ULONG_PTR>(
+        GetKeyboardLayout(foregroundThread ? foregroundThread : GetCurrentThreadId())));
+    std::printf("TSF controller test languages: current=0x%04X foreground=0x%04X hwnd=%p\\n",
+        currentLanguage, foregroundLanguage, foreground);
+
     if (!vikey::tsf::initialize()) {
         std::puts("TSF controller initialize: FAIL");
         return 1;
     }
     const bool activated = vikey::tsf::sync(true);
-    const bool reactivated = activated && !vikey::tsf::sync(false) && vikey::tsf::sync(true);
+    std::printf("TSF controller activate result: %s\\n", activated ? "true" : "false");
+    const bool disabled = !vikey::tsf::sync(false);
+    const bool reactivated = vikey::tsf::sync(true);
+    std::printf("TSF controller deactivate/activate: %s / %s\\n",
+        disabled ? "true" : "false", reactivated ? "true" : "false");
     vikey::tsf::shutdown();
     const bool cleaned = cleanupRegistration();
 
