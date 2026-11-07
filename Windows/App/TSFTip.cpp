@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cwchar>
 #include <new>
+#include <utility>
 
 const CLSID CLSID_VikeyTextService =
 { 0x9b7a4d31, 0x6d8f, 0x4d22, { 0xa1, 0x73, 0x5e, 0x91, 0x2c, 0x44, 0x8b, 0x60 } };
@@ -77,12 +78,124 @@ static void tipNote(unsigned id, const wchar_t* text) {
     CloseHandle(file);
 }
 
+static bool isSafeInputContext(TfEditCookie cookie, ITfRange* range) {
+    if (!range) return false;
+    ITfContext* context = nullptr;
+    HRESULT hr = range->GetContext(&context);
+    if (FAILED(hr) || !context) return false;
+    ITfReadOnlyProperty* property = nullptr;
+    hr = context->GetAppProperty(kGuidPropInputScope, &property);
+    context->Release();
+    if (FAILED(hr) || !property) { tipNote(19, L"input scope: application exposes no input-scope property"); return false; }
+
+    VARIANT value;
+    VariantInit(&value);
+    hr = property->GetValue(cookie, range, &value);
+    property->Release();
+    if (SUCCEEDED(hr) && (value.vt == VT_EMPTY || value.vt == VT_NULL)) {
+        // Most applications never declare an input scope, which means an ordinary
+        // text field. Password and other sensitive fields declare an explicit
+        // scope (checked below) and are also flagged by the controller's UI
+        // Automation check (isSecureInputContext).
+        tipNote(20, L"input scope: none declared, treated as plain text");
+        VariantClear(&value);
+        return true;
+    }
+    if (FAILED(hr) || value.vt != VT_UNKNOWN || !value.punkVal) {
+        wchar_t note[160] = {};
+        swprintf_s(note, _countof(note), L"input scope: property has no value (hr=0x%08lX vt=%u), treated as unsafe",
+            static_cast<unsigned long>(hr), static_cast<unsigned>(value.vt));
+        tipNote(20, note);
+        VariantClear(&value);
+        return false;
+    }
+
+    ITfInputScope* inputScope = nullptr;
+    hr = value.punkVal->QueryInterface(IID_PPV_ARGS(&inputScope));
+    VariantClear(&value);
+    if (FAILED(hr) || !inputScope) return false;
+
+    InputScope* scopes = nullptr;
+    UINT count = 0;
+    hr = inputScope->GetInputScopes(&scopes, &count);
+    inputScope->Release();
+    if (FAILED(hr) || !scopes || count == 0 || count > 32) {
+        if (scopes) CoTaskMemFree(scopes);
+        return false;
+    }
+
+    bool safe = true;
+    for (UINT i = 0; i < count; ++i) {
+        if (!vikey::tsf::isAllowedInputScope(scopes[i])) {
+            wchar_t note[128] = {};
+            swprintf_s(note, _countof(note), L"input scope: scope %d is not allowed", static_cast<int>(scopes[i]));
+            tipNote(21, note);
+            safe = false;
+            break;
+        }
+    }
+    CoTaskMemFree(scopes);
+    return safe;
+}
+
+// Read-only check run from OnTestKeyDown, so a key is only claimed when the
+// focused field is an editable, empty-selection, non-sensitive text context.
+class VikeyContextProbe final : public ITfEditSession {
+public:
+    explicit VikeyContextProbe(ITfContext* context) : context_(context) {
+        if (context_) context_->AddRef();
+    }
+    ~VikeyContextProbe() { if (context_) context_->Release(); }
+    STDMETHODIMP QueryInterface(REFIID iid, void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_ITfEditSession))
+            *object = static_cast<ITfEditSession*>(this);
+        else return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        ULONG refs = --refs_;
+        if (!refs) delete this;
+        return refs;
+    }
+    bool safe() const { return safe_; }
+
+    STDMETHODIMP DoEditSession(TfEditCookie cookie) override {
+        safe_ = false;
+        if (!context_) return E_UNEXPECTED;
+        TF_STATUS status{};
+        HRESULT hr = context_->GetStatus(&status);
+        if (FAILED(hr)) { tipNote(8, L"probe: ITfContext::GetStatus failed"); return hr; }
+        if (status.dwDynamicFlags & TF_SD_READONLY) { tipNote(9, L"probe: context is read-only"); return S_OK; }
+        TF_SELECTION selection{};
+        ULONG fetched = 0;
+        hr = context_->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+        if (FAILED(hr) || fetched != 1 || !selection.range) {
+            if (selection.range) selection.range->Release();
+            tipNote(10, L"probe: no selection available (GetSelection failed)");
+            return S_OK;
+        }
+        BOOL empty = FALSE;
+        hr = selection.range->IsEmpty(cookie, &empty);
+        if (SUCCEEDED(hr) && empty) safe_ = isSafeInputContext(cookie, selection.range);
+        else if (SUCCEEDED(hr)) tipNote(12, L"probe: text is selected, key left to the application");
+        selection.range->Release();
+        return S_OK;
+    }
+private:
+    std::atomic<ULONG> refs_{1};
+    ITfContext* context_ = nullptr;
+    bool safe_ = false;
+};
+
 class VikeyEditSession final : public ITfEditSession {
 public:
     VikeyEditSession(ITfContext* context, vikey::tsf::EngineAdapter* adapter,
-                     UINT virtualKey, bool shift, bool capsLock, bool modified)
-        : context_(context), adapter_(adapter), virtualKey_(virtualKey),
-          shift_(shift), capsLock_(capsLock), modified_(modified) {
+                     const vikey::tsf::EngineEdit& edit)
+        : context_(context), adapter_(adapter), edit_(edit) {
         if (context_) context_->AddRef();
     }
     ~VikeyEditSession() { if (context_) context_->Release(); }
@@ -137,8 +250,7 @@ public:
             return FAILED(hr) ? hr : S_OK;
         }
 
-        vikey::tsf::EngineEdit edit =
-            adapter_->processKey(virtualKey_, shift_, capsLock_, modified_);
+        const vikey::tsf::EngineEdit& edit = edit_;
         if (!edit.consume) {
             tipNote(17, L"edit session: engine ran and passed the key through (normal for plain letters)");
             selection.range->Release();
@@ -196,62 +308,11 @@ public:
     }
 
 private:
-    static bool isSafeInputContext(TfEditCookie cookie, ITfRange* range) {
-        if (!range) return false;
-        ITfContext* context = nullptr;
-        HRESULT hr = range->GetContext(&context);
-        if (FAILED(hr) || !context) return false;
-        ITfReadOnlyProperty* property = nullptr;
-        hr = context->GetAppProperty(kGuidPropInputScope, &property);
-        context->Release();
-        if (FAILED(hr) || !property) { tipNote(19, L"input scope: application exposes no input-scope property"); return false; }
-
-        VARIANT value;
-        VariantInit(&value);
-        hr = property->GetValue(cookie, range, &value);
-        property->Release();
-        if (FAILED(hr) || value.vt != VT_UNKNOWN || !value.punkVal) {
-            wchar_t note[160] = {};
-            swprintf_s(note, _countof(note), L"input scope: property has no value (hr=0x%08lX vt=%u), treated as unsafe",
-                static_cast<unsigned long>(hr), static_cast<unsigned>(value.vt));
-            tipNote(20, note);
-            VariantClear(&value);
-            return false;
-        }
-
-        ITfInputScope* inputScope = nullptr;
-        hr = value.punkVal->QueryInterface(IID_PPV_ARGS(&inputScope));
-        VariantClear(&value);
-        if (FAILED(hr) || !inputScope) return false;
-
-        InputScope* scopes = nullptr;
-        UINT count = 0;
-        hr = inputScope->GetInputScopes(&scopes, &count);
-        inputScope->Release();
-        if (FAILED(hr) || !scopes || count == 0 || count > 32) {
-            if (scopes) CoTaskMemFree(scopes);
-            return false;
-        }
-
-        bool safe = true;
-        for (UINT i = 0; i < count; ++i) {
-            if (!vikey::tsf::isAllowedInputScope(scopes[i])) {
-                wchar_t note[128] = {};
-                swprintf_s(note, _countof(note), L"input scope: scope %d is not allowed", static_cast<int>(scopes[i]));
-                tipNote(21, note);
-                safe = false;
-                break;
-            }
-        }
-        CoTaskMemFree(scopes);
-        return safe;
-    }
-
     std::atomic<ULONG> refs_{1};
     ITfContext* context_ = nullptr;
     vikey::tsf::EngineAdapter* adapter_ = nullptr;
-    UINT virtualKey_ = 0;
-    bool shift_ = false, capsLock_ = false, modified_ = false, applied_ = false;
+    vikey::tsf::EngineEdit edit_;
+    bool applied_ = false;
 };
 }
 
@@ -316,11 +377,13 @@ public:
 
     STDMETHODIMP Deactivate() override {
         adapter_.reset();
+        hasPending_ = false;
         return unadvise();
     }
 
     STDMETHODIMP OnSetFocus(BOOL) override {
         adapter_.reset();
+        hasPending_ = false;
         observedLanguage_ = vLanguage;
         return S_OK;
     }
@@ -339,17 +402,11 @@ public:
         }
         if (vikey::tsf::isSecureInputContext()) { tipNote(6, L"declined: controller marks the focused field as secure/unknown"); return S_OK; }
         if (vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
-        tipNote(7, L"OnTestKeyDown accepted a key, OnKeyDown will run");
-        *eaten = TRUE; // Request OnKeyDown; actual consumption is decided in the edit session.
-        return S_OK;
-    }
-    STDMETHODIMP OnKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
-        if (!eaten) return E_POINTER;
-        *eaten = FALSE;
-        refreshRuntimeSettings();
-        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() || !vikey::tsf::isControllerRunning() ||
-            vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
 
+        // TSF stops delivering a key to the application once OnTestKeyDown says
+        // "eaten", so only claim keys the engine really turns into an edit. Plain
+        // letters, Space, Enter, Backspace, arrows... must pass straight through.
+        hasPending_ = false;
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         const bool capsLock = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
         const bool modified =
@@ -357,17 +414,46 @@ public:
             (GetKeyState(VK_MENU) & 0x8000) != 0 ||
             (GetKeyState(VK_LWIN) & 0x8000) != 0 ||
             (GetKeyState(VK_RWIN) & 0x8000) != 0;
-
-        auto* session = new (std::nothrow) VikeyEditSession(
-            context, &adapter_, static_cast<UINT>(key), shift, capsLock, modified);
+        if (!modified && !contextAllowsEditing(context)) {
+            adapter_.reset();
+            return S_OK;
+        }
+        vikey::tsf::EngineEdit edit =
+            adapter_.processKey(static_cast<UINT>(key), shift, capsLock, modified);
+        if (!edit.consume) {
+            tipNote(17, L"engine ran and passed the key through (normal for plain letters)");
+            return S_OK;
+        }
+        pendingKey_ = static_cast<UINT>(key);
+        pendingEdit_ = std::move(edit);
+        hasPending_ = true;
+        tipNote(7, L"OnTestKeyDown claimed a key for a Vietnamese edit");
+        *eaten = TRUE;
+        return S_OK;
+    }
+    STDMETHODIMP OnKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
+        if (!eaten) return E_POINTER;
+        *eaten = FALSE;
+        if (!context || !hasPending_ || pendingKey_ != static_cast<UINT>(key)) {
+            tipNote(23, L"OnKeyDown without a matching OnTestKeyDown result; key passed through");
+            hasPending_ = false;
+            return S_OK;
+        }
+        hasPending_ = false;
+        auto* session = new (std::nothrow) VikeyEditSession(context, &adapter_, pendingEdit_);
         if (!session) return E_OUTOFMEMORY;
         HRESULT sessionResult = E_FAIL;
         HRESULT hr = context->RequestEditSession(clientId_, session,
             TF_ES_SYNC | TF_ES_READWRITE, &sessionResult);
         if (SUCCEEDED(hr) && SUCCEEDED(sessionResult))
             *eaten = session->applied() ? TRUE : FALSE;
-        else
+        else {
+            wchar_t note[160] = {};
+            swprintf_s(note, _countof(note), L"edit session could not run (request hr=0x%08lX, session hr=0x%08lX)",
+                static_cast<unsigned long>(hr), static_cast<unsigned long>(sessionResult));
+            tipNote(24, note);
             adapter_.reset();
+        }
         session->Release();
         return S_OK;
     }
@@ -388,6 +474,23 @@ public:
     }
 
 private:
+    bool contextAllowsEditing(ITfContext* context) {
+        auto* probe = new (std::nothrow) VikeyContextProbe(context);
+        if (!probe) return false;
+        HRESULT sessionResult = E_FAIL;
+        HRESULT hr = context->RequestEditSession(clientId_, probe,
+            TF_ES_SYNC | TF_ES_READ, &sessionResult);
+        const bool safe = SUCCEEDED(hr) && SUCCEEDED(sessionResult) && probe->safe();
+        if (FAILED(hr) || FAILED(sessionResult)) {
+            wchar_t note[160] = {};
+            swprintf_s(note, _countof(note), L"probe: read edit session could not run (request hr=0x%08lX, session hr=0x%08lX)",
+                static_cast<unsigned long>(hr), static_cast<unsigned long>(sessionResult));
+            tipNote(22, note);
+        }
+        probe->Release();
+        return safe;
+    }
+
     void refreshRuntimeSettings() {
         vikey::tsf::refreshTsfEngineSettings();
         if (observedLanguage_ != vLanguage) {
@@ -418,6 +521,9 @@ private:
     std::atomic<ULONG> refs_{1};
     vikey::tsf::EngineAdapter adapter_;
     int observedLanguage_ = -1;
+    bool hasPending_ = false;
+    UINT pendingKey_ = 0;
+    vikey::tsf::EngineEdit pendingEdit_;
     ITfThreadMgr* threadMgr_ = nullptr;
     ITfKeystrokeMgr* keyMgr_ = nullptr;
     TfClientId clientId_ = TF_CLIENTID_NULL;
