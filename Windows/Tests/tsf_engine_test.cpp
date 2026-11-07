@@ -16,7 +16,7 @@ int main() {
     EngineAdapter adapter;
     check("adapter initializes", adapter.initialize());
     EngineEdit a = adapter.processKey('A', false, false, false);
-    check("plain letter is consumed by Telex engine", a.consume);
+    check("plain letter is passed through while engine tracks the word", !a.consume);
     EngineEdit s = adapter.processKey('S', false, false, false);
     check("tone key produces replacement", s.consume && s.backspaces == 1 && s.text == L"á");
 
@@ -41,7 +41,7 @@ int main() {
         threadA = local.processKey('S', false, false, false);
         std::lock_guard<std::mutex> lock(mutex);
         stage = 3; cv.notify_all();
-        if (!init || !firstLetter.consume) threadA.consume = false;
+        if (!init || firstLetter.consume) threadA.consume = false;
     });
     std::thread second([&] {
         EngineAdapter local;
@@ -57,7 +57,7 @@ int main() {
             cv.wait(lock, [&] { return stage >= 3; });
         }
         threadB = local.processKey('S', false, false, false);
-        if (!init || !firstLetter.consume) threadB.consume = false;
+        if (!init || firstLetter.consume) threadB.consume = false;
     });
     first.join();
     second.join();
