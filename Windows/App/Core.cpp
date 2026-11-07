@@ -1,6 +1,7 @@
 #include "Core.h"
 #include "Site.h"
 #include "KeyMap.h"
+#include "InputPolicy.h"
 #include "Prefs.h"
 #include "Engine.h"
 #include <psapi.h>
@@ -200,10 +201,7 @@ std::wstring frontAppName() { return _frontApp; }
 bool isFrontAppBlacklisted() { return _frontAppBlacklisted; }
 std::vector<std::wstring> blacklistedApps() { return _blacklistedApps; }
 static std::wstring normalizedExe(std::wstring name) {
-    size_t slash = name.find_last_of(L"\\/");
-    if (slash != std::wstring::npos) name = name.substr(slash + 1);
-    std::transform(name.begin(), name.end(), name.begin(), towlower);
-    return name;
+    return input::normalizedExe(std::move(name));
 }
 static void saveBlacklist() { prefs::setStringList(L"AppBlacklist", _blacklistedApps); }
 void addFrontAppToBlacklist() {
@@ -218,9 +216,7 @@ void removeAppFromBlacklist(const std::wstring& exeName) {
     saveBlacklist(); onForegroundChanged();
 }
 static bool isBlacklisted(const std::wstring& exeName) {
-    std::wstring target = normalizedExe(exeName);
-    for (const auto& item : _blacklistedApps) if (normalizedExe(item) == target) return true;
-    return false;
+    return input::isBlacklisted(exeName, _blacklistedApps);
 }
 
 static void queryFrontMostApp() {
@@ -360,13 +356,7 @@ static void SendEngineOutput() {
 
 // ---- Hotkey ------------------------------------------------------------------------------
 static bool checkHotKey(int hotKeyData, bool checkKeyCode = true) {
-    if ((hotKeyData & (~0x8000)) == EMPTY_HOTKEY) return false;
-    if (HAS_CONTROL(hotKeyData) ^ GET_BOOL(_lastFlag & F_CONTROL)) return false;
-    if (HAS_OPTION(hotKeyData) ^ GET_BOOL(_lastFlag & F_ALT)) return false;
-    if (HAS_COMMAND(hotKeyData) ^ GET_BOOL(_lastFlag & F_WIN)) return false;
-    if (HAS_SHIFT(hotKeyData) ^ GET_BOOL(_lastFlag & F_SHIFT)) return false;
-    if (checkKeyCode && GET_SWITCH_KEY(hotKeyData) != _keycode) return false;
-    return true;
+    return input::matchesHotkey(hotKeyData, _lastFlag, _keycode, checkKeyCode);
 }
 static void switchLanguage(const char* via) {
     PauseAutoSwitchAfterManual();
