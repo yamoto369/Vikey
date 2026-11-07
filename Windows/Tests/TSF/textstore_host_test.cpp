@@ -313,7 +313,6 @@ int wmain() {
     ITfDocumentMgr* documentManager = nullptr;
     ITfContext* context = nullptr;
     ITfKeystrokeMgr* keystrokes = nullptr;
-    ITfTextInputProcessorEx* tip = nullptr;
     auto* store = new (std::nothrow) MemoryTextStore();
     if (!store) {
         writeLog("FAIL: allocate ITextStoreACP");
@@ -339,12 +338,9 @@ int wmain() {
     hr = threadManager->QueryInterface(IID_PPV_ARGS(&keystrokes));
     if (FAILED(hr)) { writeLog("FAIL: query ITfKeystrokeMgr"); goto Cleanup; }
 
-    hr = CoCreateInstance(CLSID_VikeyTextService, nullptr, CLSCTX_INPROC_SERVER,
-                          IID_PPV_ARGS(&tip));
-    if (FAILED(hr)) { writeLog("FAIL: CoCreateInstance(Vikey TIP)"); goto Cleanup; }
-    hr = tip->ActivateEx(threadManager, clientId, 0);
-    if (FAILED(hr)) { writeLog("FAIL: activate Vikey TIP"); goto Cleanup; }
-
+    // DllRegisterServer activates Vikey's language profile. Creating/activating the
+    // ThreadMgr and focusing this document lets TSF itself load the registered TIP.
+    // Do not create a second service instance on the same client/thread.
     {
         const WPARAM keys[] = {'V', 'I', 'E', 'T', 'S'};
         for (WPARAM key : keys) {
@@ -372,7 +368,6 @@ int wmain() {
     hr = S_OK;
 
 Cleanup:
-    if (tip) { tip->Deactivate(); tip->Release(); }
     if (keystrokes) keystrokes->Release();
     if (documentManager) documentManager->Pop(TF_POPF_ALL);
     if (context) context->Release();

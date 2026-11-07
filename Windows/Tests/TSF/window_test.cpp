@@ -4,10 +4,18 @@
 #include <string>
 
 static void logLine(const char* line) {
-    CreateDirectoryW(L"Logs", nullptr);
-    FILE* file = nullptr;
-    fopen_s(&file, "Logs\\tsf-window-test.log", "ab");
-    if (file) { fprintf(file, "%s\r\n", line); fclose(file); }
+    wchar_t directory[MAX_PATH] = {};
+    DWORD length = GetEnvironmentVariableW(L"VIKEY_TSF_LOG_DIR", directory, MAX_PATH);
+    if (!length || length >= MAX_PATH) wcscpy_s(directory, L"Logs");
+    CreateDirectoryW(directory, nullptr);
+    const std::wstring path = std::wstring(directory) + L"\\tsf-window-test.log";
+    HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(file, line, (DWORD)strlen(line), &written, nullptr);
+    WriteFile(file, "\r\n", 2, &written, nullptr);
+    CloseHandle(file);
 }
 static std::wstring siblingTipPath() {
     wchar_t exe[MAX_PATH] = {};
