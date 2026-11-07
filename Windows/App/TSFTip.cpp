@@ -139,6 +139,80 @@ private:
 };
 }
 
+
+const GUID GUID_VikeyProfile =
+{ 0x4e7c1a26, 0x8d39, 0x4f51, { 0xb2, 0x07, 0x61, 0x33, 0x9a, 0xc8, 0x42, 0x15 } };
+
+static HRESULT registerComClass() {
+    wchar_t module[MAX_PATH] = {};
+    if (!GetModuleFileNameW(g_module, module, MAX_PATH)) return HRESULT_FROM_WIN32(GetLastError());
+    wchar_t clsid[64] = {};
+    if (StringFromGUID2(CLSID_VikeyTextService, clsid, 64) == 0) return E_FAIL;
+    wchar_t keyPath[128] = {};
+    if (swprintf_s(keyPath, L"CLSID\\%s\\InprocServer32", clsid) < 0) return E_FAIL;
+    HKEY key = nullptr;
+    LONG error = RegCreateKeyExW(HKEY_CLASSES_ROOT, keyPath, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
+    if (error != ERROR_SUCCESS) return HRESULT_FROM_WIN32(error);
+    error = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(module),
+        static_cast<DWORD>((wcslen(module) + 1) * sizeof(wchar_t)));
+    if (error == ERROR_SUCCESS) {
+        const wchar_t model[] = L"Apartment";
+        error = RegSetValueExW(key, L"ThreadingModel", 0, REG_SZ,
+            reinterpret_cast<const BYTE*>(model), sizeof(model));
+    }
+    RegCloseKey(key);
+    return HRESULT_FROM_WIN32(error);
+}
+
+extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
+    HRESULT hr = registerComClass();
+    if (FAILED(hr)) return hr;
+    ITfInputProcessorProfiles* profiles = nullptr;
+    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITfInputProcessorProfiles, reinterpret_cast<void**>(&profiles));
+    if (SUCCEEDED(hr)) {
+        hr = profiles->Register(CLSID_VikeyTextService);
+        if (SUCCEEDED(hr)) {
+            BSTR description = SysAllocString(L"Vikey Vietnamese Input");
+            if (!description) hr = E_OUTOFMEMORY;
+            else {
+                hr = profiles->AddLanguageProfile(CLSID_VikeyTextService, 0x042A,
+                    GUID_VikeyProfile, description, nullptr, 0, nullptr);
+                SysFreeString(description);
+            }
+        }
+        profiles->Release();
+    }
+    if (FAILED(hr)) {
+        wchar_t clsid[64] = {};
+        StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
+        wchar_t keyPath[128] = {};
+        swprintf_s(keyPath, L"CLSID\\%s", clsid);
+        RegDeleteTreeW(HKEY_CLASSES_ROOT, keyPath);
+    }
+    return hr;
+}
+
+extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
+    HRESULT result = S_OK;
+    ITfInputProcessorProfiles* profiles = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITfInputProcessorProfiles, reinterpret_cast<void**>(&profiles));
+    if (SUCCEEDED(hr)) {
+        hr = profiles->Unregister(CLSID_VikeyTextService);
+        if (FAILED(hr) && hr != CONNECT_E_NOCONNECTION) result = hr;
+        profiles->Release();
+    } else result = hr;
+    wchar_t clsid[64] = {};
+    StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
+    wchar_t keyPath[128] = {};
+    swprintf_s(keyPath, L"CLSID\\%s", clsid);
+    LONG error = RegDeleteTreeW(HKEY_CLASSES_ROOT, keyPath);
+    if (error != ERROR_SUCCESS && error != ERROR_FILE_NOT_FOUND && SUCCEEDED(result))
+        result = HRESULT_FROM_WIN32(error);
+    return result;
+}
+
 extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) { g_module = instance; DisableThreadLibraryCalls(instance); }
     return TRUE;
