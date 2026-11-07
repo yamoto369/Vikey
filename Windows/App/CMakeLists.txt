@@ -38,3 +38,11 @@ target_compile_definitions(vikey_input_policy_test PRIVATE UNICODE _UNICODE)
 add_executable(vikey_tsf_policy_test ../Tests/tsf_policy_test.cpp)
 target_include_directories(vikey_tsf_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(vikey_tsf_policy_test PRIVATE UNICODE _UNICODE)
+
+# Initial in-process TSF COM DLL. It is deliberately pass-through until the
+# TSF adapter/edit-session implementation is complete.
+add_library(vikey_tsf MODULE TSFTip.cpp)
+target_include_directories(vikey_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(vikey_tsf PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(vikey_tsf PRIVATE ole32 uuid)
+set_target_properties(vikey_tsf PROPERTIES PREFIX "" OUTPUT_NAME "VikeyTsf")
