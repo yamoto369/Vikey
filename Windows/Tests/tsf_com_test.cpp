@@ -80,12 +80,25 @@ int wmain(int argc, wchar_t** argv) {
                     const bool threadMgrActivated = SUCCEEDED(hr) && clientId != TF_CLIENTID_NULL;
                     check("activate TSF thread manager", threadMgrActivated);
                     if (threadMgrActivated) {
+                        ITfKeystrokeMgr* queriedKeyMgr = nullptr;
+                        HRESULT queryHr = threadMgr->QueryInterface(IID_PPV_ARGS(&queriedKeyMgr));
+                        std::printf("ITfThreadMgr::QueryInterface(ITfKeystrokeMgr) = 0x%08lX\\n",
+                            static_cast<unsigned long>(queryHr));
+                        check("thread manager exposes ITfKeystrokeMgr",
+                            SUCCEEDED(queryHr) && queriedKeyMgr != nullptr);
+                        if (queriedKeyMgr) queriedKeyMgr->Release();
+
                         hr = tip->Activate(threadMgr, clientId);
-                        check("TIP activation advises real TSF key sink", SUCCEEDED(hr));
-                        check("duplicate TIP activation rejected",
-                            tip->Activate(threadMgr, clientId) == TF_E_ALREADY_EXISTS);
-                        check("TIP deactivation unadvises real TSF key sink", SUCCEEDED(tip->Deactivate()));
-                        check("TIP deactivation is idempotent", SUCCEEDED(tip->Deactivate()));
+                        std::printf("TIP Activate HRESULT = 0x%08lX\\n",
+                            static_cast<unsigned long>(hr));
+                        const bool tipActivated = SUCCEEDED(hr);
+                        check("TIP activation advises real TSF key sink", tipActivated);
+                        if (tipActivated) {
+                            check("duplicate TIP activation rejected",
+                                tip->Activate(threadMgr, clientId) == TF_E_ALREADY_EXISTS);
+                            check("TIP deactivation unadvises real TSF key sink", SUCCEEDED(tip->Deactivate()));
+                            check("TIP deactivation is idempotent", SUCCEEDED(tip->Deactivate()));
+                        }
                         check("deactivate TSF thread manager", SUCCEEDED(threadMgr->Deactivate()));
                     }
                     threadMgr->Release();
