@@ -152,8 +152,8 @@ HRESULT registerProfiles() {
             TF_IPPMF_FORSESSION | TF_IPPMF_ENABLEPROFILE |
             TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE;
         hr = profileManager->ActivateProfile(
-            TF_PROFILETYPE_INPUTPROCESSOR, CLSID_VikeyTextService,
-            targetLanguage, GUID_VikeyProfile, nullptr, flags);
+            TF_PROFILETYPE_INPUTPROCESSOR, targetLanguage, CLSID_VikeyTextService,
+            GUID_VikeyProfile, nullptr, flags);
         logRegistration(SUCCEEDED(hr) ? "activate-profile" : "activate-profile-failed", hr);
     }
 
@@ -161,6 +161,8 @@ HRESULT registerProfiles() {
     legacyProfiles->Release();
     return hr;
 }
+} // namespace
+
 extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer() {
     HRESULT hr = registerComClass();
     if (FAILED(hr)) { logRegistration("register-com-class-failed", hr); return hr; }
