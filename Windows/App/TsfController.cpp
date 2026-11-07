@@ -1,4 +1,5 @@
 #include "TsfController.h"
+#include "TsfDiagnostics.h"
 #include <windows.h>
 #include <msctf.h>
 #include <objbase.h>
@@ -56,7 +57,7 @@ HRESULT updateComClassPath(const std::wstring& dllPath) {
     HKEY key = nullptr;
     LONG error = RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, nullptr, 0,
         KEY_SET_VALUE, nullptr, &key, nullptr);
-    if (error != ERROR_SUCCESS) return HRESULT_FROM_WIN32(error);
+    if (error != ERROR_SUCCESS) { vikey::tsf::diagnostics::result(L"COM registry key creation failed", HRESULT_FROM_WIN32(error), error); return HRESULT_FROM_WIN32(error); }
     error = RegSetValueExW(key, nullptr, 0, REG_SZ,
         reinterpret_cast<const BYTE*>(dllPath.c_str()),
         static_cast<DWORD>((dllPath.size() + 1) * sizeof(wchar_t)));
@@ -66,6 +67,7 @@ HRESULT updateComClassPath(const std::wstring& dllPath) {
             reinterpret_cast<const BYTE*>(threading), sizeof(threading));
     }
     RegCloseKey(key);
+    vikey::tsf::diagnostics::result(L"COM registry path update", HRESULT_FROM_WIN32(error), error);
     return HRESULT_FROM_WIN32(error);
 }
 
@@ -103,20 +105,21 @@ bool hasLanguageProfile(ITfInputProcessorProfiles* profiles, LANGID language) {
 bool ensureLanguageProfile(ITfInputProcessorProfiles* profiles, LANGID language) {
     if (!hasLanguageProfile(profiles, language)) {
         BSTR description = SysAllocString(L"Vikey Vietnamese Input");
-        if (!description) return false;
+        if (!description) { vikey::tsf::diagnostics::result(L"SysAllocString failed", E_OUTOFMEMORY); return false; }
         HRESULT addHr = profiles->AddLanguageProfile(kVikeyClsid, language, kVikeyProfile,
             description, static_cast<ULONG>(SysStringLen(description)), nullptr, 0, 0);
         SysFreeString(description);
-        if (FAILED(addHr) && !hasLanguageProfile(profiles, language)) return false;
+        if (FAILED(addHr) && !hasLanguageProfile(profiles, language)) { vikey::tsf::diagnostics::result(L"AddLanguageProfile failed", addHr); return false; }
     }
 
     BOOL enabled = FALSE;
     HRESULT hr = profiles->IsEnabledLanguageProfile(kVikeyClsid, language, kVikeyProfile, &enabled);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) { vikey::tsf::diagnostics::result(L"IsEnabledLanguageProfile failed", hr); return false; }
     if (!enabled) {
         hr = profiles->EnableLanguageProfile(kVikeyClsid, language, kVikeyProfile, TRUE);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) { vikey::tsf::diagnostics::result(L"EnableLanguageProfile failed", hr); return false; }
     }
+    vikey::tsf::diagnostics::write(L"Language profile is registered and enabled");
     return true;
 }
 
@@ -124,7 +127,7 @@ bool ensureKeyboardCategory() {
     ITfCategoryMgr* categories = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&categories));
-    if (FAILED(hr) || !categories) return false;
+    if (FAILED(hr) || !categories) { vikey::tsf::diagnostics::result(L"Create TSF category manager failed", hr); return false; }
     IEnumGUID* enumerator = nullptr;
     hr = categories->EnumCategoriesInItem(kVikeyProfile, &enumerator);
     bool found = false;
@@ -138,42 +141,50 @@ bool ensureKeyboardCategory() {
     }
     if (!found) hr = categories->RegisterCategory(kVikeyClsid, GUID_TFCAT_TIP_KEYBOARD, kVikeyProfile);
     categories->Release();
+    vikey::tsf::diagnostics::result(L"Register keyboard TIP category", hr);
     return SUCCEEDED(hr);
 }
 
 bool ensureRegistered(const std::wstring& dllPath) {
+    vikey::tsf::diagnostics::write((L"Registering COM class for DLL: " + dllPath).c_str());
     HRESULT hr = updateComClassPath(dllPath);
     if (FAILED(hr)) return false;
 
     ITfInputProcessorProfiles* profiles = nullptr;
     hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&profiles));
-    if (FAILED(hr) || !profiles) return false;
+    if (FAILED(hr) || !profiles) { vikey::tsf::diagnostics::result(L"Create TSF profiles manager failed", hr); return false; }
 
     if (!isProcessorRegistered(profiles)) {
-        if (!g_registerServer || FAILED(g_registerServer())) {
-            profiles->Release();
-            return false;
-        }
+        if (!g_registerServer) { vikey::tsf::diagnostics::write(L"DllRegisterServer export missing"); profiles->Release(); return false; }
+        const HRESULT registerHr = g_registerServer();
+        vikey::tsf::diagnostics::result(L"DllRegisterServer", registerHr);
+        if (FAILED(registerHr)) { profiles->Release(); return false; }
         profiles->Release();
         profiles = nullptr;
         hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&profiles));
-        if (FAILED(hr) || !profiles) return false;
+        if (FAILED(hr) || !profiles) { vikey::tsf::diagnostics::result(L"Recreate TSF profiles manager failed", hr); return false; }
+    } else {
+        vikey::tsf::diagnostics::write(L"COM input processor already registered");
     }
 
     // Keep the legacy Vietnamese profile registered, and add a profile for
     // the user's current keyboard language. This lets TSF operate without
     // changing the active Windows keyboard layout.
-    if (!ensureLanguageProfile(profiles, 0x042A)) {
+    if (!ensureLanguageProfile(profiles, 0x042A)) { vikey::tsf::diagnostics::write(L"Vietnamese profile setup failed");
         profiles->Release();
         return false;
     }
     LANGID current = 0;
-    const bool profileReady = SUCCEEDED(profiles->GetCurrentLanguage(&current)) &&
-        current && ensureLanguageProfile(profiles, current);
+    const HRESULT currentHr = profiles->GetCurrentLanguage(&current);
+    vikey::tsf::diagnostics::result(L"GetCurrentLanguage during registration", currentHr);
+    const bool profileReady = SUCCEEDED(currentHr) && current && ensureLanguageProfile(profiles, current);
     profiles->Release();
-    return profileReady && ensureKeyboardCategory();
+    if (!profileReady) { vikey::tsf::diagnostics::write(L"Current language profile setup failed"); return false; }
+    const bool categoryReady = ensureKeyboardCategory();
+    vikey::tsf::diagnostics::write(categoryReady ? L"COM and TSF profile registration completed" : L"TSF keyboard category registration failed");
+    return categoryReady;
 }
 
 bool isActiveProfile(LANGID language) {
@@ -203,44 +214,58 @@ bool deactivateActiveProfile() {
 
 namespace vikey { namespace tsf {
 bool initialize() {
-    if (g_ready) return true;
+    if (g_ready) { vikey::tsf::diagnostics::write(L"initialize called: already ready"); return true; }
+    vikey::tsf::diagnostics::write(L"========== TSF initialization started ==========");
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    vikey::tsf::diagnostics::result(L"CoInitializeEx", hr);
     if (FAILED(hr)) return false;
     g_comInitialized = true;
 
     const std::wstring path = modulePath();
-    if (path.empty()) { shutdown(); return false; }
+    if (path.empty()) { vikey::tsf::diagnostics::write(L"Cannot determine DLL path"); shutdown(); return false; }
+    vikey::tsf::diagnostics::write((L"TSF DLL path: " + path).c_str());
+    SetLastError(ERROR_SUCCESS);
     g_tipModule = LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!g_tipModule) { shutdown(); return false; }
+    if (!g_tipModule) { const DWORD error = GetLastError(); vikey::tsf::diagnostics::result(L"LoadLibraryExW failed", HRESULT_FROM_WIN32(error), error); shutdown(); return false; }
+    vikey::tsf::diagnostics::write(L"LoadLibraryExW succeeded");
+    SetLastError(ERROR_SUCCESS);
     g_registerServer = reinterpret_cast<RegisterServerFn>(GetProcAddress(g_tipModule, "DllRegisterServer"));
-    if (!g_registerServer || !ensureRegistered(path)) { shutdown(); return false; }
+    if (!g_registerServer) { const DWORD error = GetLastError(); vikey::tsf::diagnostics::result(L"GetProcAddress(DllRegisterServer) failed", HRESULT_FROM_WIN32(error), error); shutdown(); return false; }
+    vikey::tsf::diagnostics::write(L"DllRegisterServer export found");
+    if (!ensureRegistered(path)) { vikey::tsf::diagnostics::write(L"ensureRegistered failed"); shutdown(); return false; }
 
     // Register and enable the language profile before activating TSF on
     // this thread. This follows the documented TSF profile activation order.
     hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&g_profiles));
-    if (FAILED(hr) || !g_profiles) { shutdown(); return false; }
+    if (FAILED(hr) || !g_profiles) { vikey::tsf::diagnostics::result(L"Create TSF profiles manager failed", hr); shutdown(); return false; }
     LANGID currentLanguage = 0;
     hr = g_profiles->GetCurrentLanguage(&currentLanguage);
+    vikey::tsf::diagnostics::result(L"GetCurrentLanguage", hr);
     if (FAILED(hr) || !currentLanguage || !ensureLanguageProfile(g_profiles, currentLanguage)) {
-        shutdown();
-        return false;
+        vikey::tsf::diagnostics::write(L"Current language profile unavailable"); shutdown(); return false;
     }
 
     hr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&g_threadMgr));
-    if (FAILED(hr) || !g_threadMgr) { shutdown(); return false; }
+    if (FAILED(hr) || !g_threadMgr) { vikey::tsf::diagnostics::result(L"Create TSF thread manager failed", hr); shutdown(); return false; }
+    vikey::tsf::diagnostics::write(L"TSF thread manager created");
     hr = g_threadMgr->Activate(&g_clientId);
-    if (FAILED(hr) || g_clientId == TF_CLIENTID_NULL) { shutdown(); return false; }
+    vikey::tsf::diagnostics::result(L"ITfThreadMgr::Activate", hr);
+    if (FAILED(hr) || g_clientId == TF_CLIENTID_NULL) { vikey::tsf::diagnostics::write(L"TSF thread manager activation failed"); shutdown(); return false; }
 
     g_ready = true;
+    vikey::tsf::diagnostics::write(L"========== TSF initialization succeeded ==========");
     return true;
 }
 
 bool sync(bool vietnameseEnabled) {
-    if (!g_ready) return false;
+    static int lastState = -1;
+    if (!g_ready) { if (lastState != 0) vikey::tsf::diagnostics::write(L"TSF sync: controller not initialized"); lastState = 0; return false; }
     if (!vietnameseEnabled) {
         deactivateActiveProfile();
+        if (lastState != 1) vikey::tsf::diagnostics::write(L"TSF profile inactive: Vietnamese mode disabled");
+        lastState = 1;
         return false;
     }
 
@@ -252,28 +277,32 @@ bool sync(bool vietnameseEnabled) {
     // the legacy hook for that window rather than changing its layout.
     if (!language || language != foreground || !supportedLanguage(language)) {
         deactivateActiveProfile();
+        if (lastState != 2) { wchar_t msg[256] = {}; swprintf_s(msg, _countof(msg), L"TSF not activated: current=0x%04X foreground=0x%04X supported=%d", language, foreground, supportedLanguage(language) ? 1 : 0); vikey::tsf::diagnostics::write(msg); }
+        lastState = 2;
         return false;
     }
-    if (g_activeLanguage == language && isActiveProfile(language)) return true;
+    if (g_activeLanguage == language && isActiveProfile(language)) { if (lastState != 3) vikey::tsf::diagnostics::write(L"TSF profile active"); lastState = 3; return true; }
     // Another input processor may have replaced Vikey since the previous
     // timer tick. Do not claim the hook is safely bypassed unless TSF confirms
     // that Vikey is still the active keyboard profile.
     if (g_activeLanguage == language) g_activeLanguage = 0;
     deactivateActiveProfile();
-    if (FAILED(hr) || !g_profiles) return false;
+    if (FAILED(hr) || !g_profiles) { vikey::tsf::diagnostics::result(L"GetCurrentLanguage during sync failed", hr); lastState = 4; return false; }
     const bool ready = ensureLanguageProfile(g_profiles, language);
-    if (!ready) {
-        return false;
-    }
+    if (!ready) { if (lastState != 5) vikey::tsf::diagnostics::write(L"TSF sync: language profile setup failed"); lastState = 5; return false; }
 
     hr = g_profiles->ActivateLanguageProfile(kVikeyClsid, language, kVikeyProfile);
-    if (FAILED(hr) || !isActiveProfile(language)) return false;
+    vikey::tsf::diagnostics::result(L"ActivateLanguageProfile", hr);
+    if (FAILED(hr) || !isActiveProfile(language)) { if (lastState != 6) vikey::tsf::diagnostics::write(L"TSF profile did not become active"); lastState = 6; return false; }
 
     g_activeLanguage = language;
+    if (lastState != 3) vikey::tsf::diagnostics::write(L"TSF profile activation succeeded and is active");
+    lastState = 3;
     return true;
 }
 
 void shutdown() {
+    vikey::tsf::diagnostics::write(L"TSF shutdown requested");
     deactivateActiveProfile();
     if (g_threadMgr) {
         if (g_clientId != TF_CLIENTID_NULL) g_threadMgr->Deactivate();
