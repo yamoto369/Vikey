@@ -219,9 +219,12 @@ public:
     STDMETHODIMP Activate(ITfThreadMgr* threadMgr, TfClientId clientId) override {
         if (!threadMgr || clientId == TF_CLIENTID_NULL) return E_INVALIDARG;
         if (threadMgr_) return TF_E_ALREADY_EXISTS;
+        // The adapter owns per-thread engine state. Initialize it on the TSF
+        // activation thread before the key sink can receive callbacks.
+        if (!adapter_.initialize()) return E_FAIL;
         ITfKeystrokeMgr* keyMgr = nullptr;
         HRESULT hr = threadMgr->QueryInterface(IID_PPV_ARGS(&keyMgr));
-        if (FAILED(hr)) return hr;
+        if (FAILED(hr)) { adapter_.reset(); return hr; }
         threadMgr_ = threadMgr;
         threadMgr_->AddRef();
         keyMgr_ = keyMgr;
@@ -231,6 +234,7 @@ public:
             // Advise failed, so no sink registration exists; release the
             // interfaces acquired during activation.
             releaseManagers();
+            adapter_.reset();
             return hr;
         }
         advised_ = true;
