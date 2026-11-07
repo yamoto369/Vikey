@@ -80,7 +80,7 @@ jobs:
           $ver = (Select-String -Path project.yml -Pattern 'MARKETING_VERSION: "([^"]+)"').Matches[0].Groups[1].Value
           "VIKEY_VERSION=$ver" >> $env:GITHUB_ENV
           cmake -S Windows -B Windows/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build Windows/build --config Release --target vikey vikey_tsf_driver_test vikey_tsf_window_test
+          cmake --build Windows/build --config Release --target vikey vikey_tsf_driver_test vikey_tsf_window_test vikey_tsf_textstore_test
           New-Item -ItemType Directory -Force Logs | Out-Null
           $env:VIKEY_TSF_LOG_DIR = "$env:GITHUB_WORKSPACE\\Logs"
           ctest --test-dir Windows/build -C Release --output-on-failure

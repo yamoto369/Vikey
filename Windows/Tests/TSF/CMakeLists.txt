@@ -11,3 +11,8 @@ add_executable(vikey_tsf_window_test window_test.cpp)
 target_link_libraries(vikey_tsf_window_test PRIVATE ole32 user32)
 add_test(NAME tsf_window_smoke COMMAND vikey_tsf_window_test)
 set_tests_properties(tsf_window_smoke PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(vikey_tsf_textstore_test textstore_host_test.cpp)
+target_link_libraries(vikey_tsf_textstore_test PRIVATE msctf ole32 oleaut32 user32 advapi32)
+add_dependencies(vikey_tsf_textstore_test vikey_tsf)
+add_test(NAME tsf_textstore_end_to_end COMMAND vikey_tsf_textstore_test)
