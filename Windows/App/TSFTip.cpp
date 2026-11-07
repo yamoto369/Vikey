@@ -259,7 +259,7 @@ public:
     STDMETHODIMP OnKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
-        refreshTsfEngineSettings();
+        vikey::tsf::refreshTsfEngineSettings();
         if (!context || vLanguage == 0 ||
             vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
 
@@ -302,7 +302,7 @@ public:
 
 private:
     void refreshRuntimeSettings() {
-        refreshTsfEngineSettings();
+        vikey::tsf::refreshTsfEngineSettings();
         if (observedLanguage_ != vLanguage) {
             adapter_.reset();
             observedLanguage_ = vLanguage;
