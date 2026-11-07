@@ -14,29 +14,37 @@ int vOtherLanguage = 0;
 int vAutoSwitchByTyping = 0;
 
 namespace vikey { namespace tsf {
-void loadTsfEngineSettings() {
-    static std::once_flag once;
-    std::call_once(once, [] {
-        HKEY key = nullptr;
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Vikey", 0, KEY_READ, &key) == ERROR_SUCCESS) {
-            auto read = [key](const wchar_t* name, int fallback) {
-                DWORD value = static_cast<DWORD>(fallback), size = sizeof(value), type = 0;
-                if (RegQueryValueExW(key, name, nullptr, &type,
-                    reinterpret_cast<BYTE*>(&value), &size) != ERROR_SUCCESS || type != REG_DWORD)
-                    return fallback;
-                return static_cast<int>(value);
-            };
-            vLanguage = read(L"InputMethod", 1) ? 1 : 0;
-            vCheckSpelling = read(L"Spelling", 1);
-            vRestoreIfWrongSpelling = read(L"RestoreIfInvalidWord", 1);
-            vUseModernOrthography = read(L"ModernOrthography", 1);
-            vTelexStyle = read(L"TelexStyle", 0);
-            RegCloseKey(key);
-        }
-        vFixRecommendBrowser = 0;
-        vUseSmartSwitchKey = 0;
-        vOtherLanguage = 0;
-        vAutoSwitchByTyping = 0;
+void refreshTsfEngineSettings() {
+    static std::once_flag openOnce;
+    static HKEY settingsKey = nullptr;
+    std::call_once(openOnce, [] {
+        RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Vikey", 0, KEY_READ, &settingsKey);
     });
+    if (settingsKey) {
+        auto read = [](const wchar_t* name, int fallback) {
+            DWORD value = static_cast<DWORD>(fallback), size = sizeof(value), type = 0;
+            if (RegQueryValueExW(settingsKey, name, nullptr, &type,
+                reinterpret_cast<BYTE*>(&value), &size) != ERROR_SUCCESS ||
+                type != REG_DWORD || size != sizeof(value))
+                return fallback;
+            return static_cast<int>(value);
+        };
+        vLanguage = read(L"InputMethod", vLanguage) ? 1 : 0;
+        vCheckSpelling = read(L"Spelling", vCheckSpelling);
+        vRestoreIfWrongSpelling = read(L"RestoreIfInvalidWord", vRestoreIfWrongSpelling);
+        vUseModernOrthography = read(L"ModernOrthography", vUseModernOrthography);
+        vTelexStyle = read(L"TelexStyle", vTelexStyle);
+        vSetCheckSpelling();
+    }
+    // These features depend on the legacy global hook/controller and are not
+    // enabled in the in-process TIP yet.
+    vFixRecommendBrowser = 0;
+    vUseSmartSwitchKey = 0;
+    vOtherLanguage = 0;
+    vAutoSwitchByTyping = 0;
+}
+
+void loadTsfEngineSettings() {
+    refreshTsfEngineSettings();
 }
 }}

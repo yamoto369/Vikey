@@ -2,6 +2,7 @@
 #include "TsfEngineAdapter.h"
 #include "KeyMap.h"
 #include "TSFPolicy.h"
+#include "TsfEngineRuntime.h"
 #include <inputscope.h>
 #include <vector>
 #include <string>
@@ -243,11 +244,13 @@ public:
 
     STDMETHODIMP OnSetFocus(BOOL) override {
         adapter_.reset();
+        observedLanguage_ = vLanguage;
         return S_OK;
     }
     STDMETHODIMP OnTestKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
+        refreshRuntimeSettings();
         if (!context || vLanguage == 0 ||
             vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
         *eaten = TRUE; // Request OnKeyDown; actual consumption is decided in the edit session.
@@ -256,6 +259,7 @@ public:
     STDMETHODIMP OnKeyDown(ITfContext* context, WPARAM key, LPARAM, BOOL* eaten) override {
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
+        refreshTsfEngineSettings();
         if (!context || vLanguage == 0 ||
             vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
 
@@ -297,6 +301,14 @@ public:
     }
 
 private:
+    void refreshRuntimeSettings() {
+        refreshTsfEngineSettings();
+        if (observedLanguage_ != vLanguage) {
+            adapter_.reset();
+            observedLanguage_ = vLanguage;
+        }
+    }
+
     HRESULT unadvise() {
         if (advised_ && keyMgr_) {
             HRESULT hr = keyMgr_->UnadviseKeyEventSink(clientId_);
@@ -318,6 +330,7 @@ private:
     }
     std::atomic<ULONG> refs_{1};
     vikey::tsf::EngineAdapter adapter_;
+    int observedLanguage_ = -1;
     ITfThreadMgr* threadMgr_ = nullptr;
     ITfKeystrokeMgr* keyMgr_ = nullptr;
     TfClientId clientId_ = TF_CLIENTID_NULL;
