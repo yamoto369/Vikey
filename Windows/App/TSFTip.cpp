@@ -1,5 +1,6 @@
 #include "TSFTip.h"
 #include <atomic>
+#include <cstdio>
 #include <cwchar>
 #include <new>
 
@@ -220,6 +221,16 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
     return hr;
 }
 
+// Prints per-step HRESULTs to stderr when VIKEY_TSF_DIAG is set (used by the
+// CI smoke test to show which unregister step fails).
+static void diagUnregisterStep(const char* step, HRESULT hr) {
+    wchar_t flag[2] = {};
+    if (GetEnvironmentVariableW(L"VIKEY_TSF_DIAG", flag, _countof(flag)) == 0) return;
+    std::fprintf(stderr, "[VikeyTsf] DllUnregisterServer %s HRESULT = 0x%08lX\n",
+        step, static_cast<unsigned long>(hr));
+    std::fflush(stderr);
+}
+
 extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
     HRESULT result = S_OK;
 
@@ -239,25 +250,33 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
         result = hr;
     }
 
-    ITfInputProcessorProfiles* profiles = nullptr;
-    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_PPV_ARGS(&profiles));
+    // Remove the category first: ITfInputProcessorProfiles::Unregister deletes
+    // the whole TIP registration, after which UnregisterCategory has nothing
+    // left to remove and can report E_FAIL.
+    ITfCategoryMgr* categories = nullptr;
+    hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&categories));
+    diagUnregisterStep("CoCreateInstance(CategoryMgr)", hr);
     if (SUCCEEDED(hr)) {
-        hr = profiles->Unregister(CLSID_VikeyTextService);
-        if (FAILED(hr) && SUCCEEDED(result)) result = hr;
-        profiles->Release();
+        hr = categories->UnregisterCategory(CLSID_VikeyTextService,
+            GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyProfile);
+        diagUnregisterStep("UnregisterCategory", hr);
+        // A category that is already gone is not a cleanup failure.
+        if (FAILED(hr) && hr != E_FAIL && SUCCEEDED(result)) result = hr;
+        categories->Release();
     } else if (SUCCEEDED(result)) {
         result = hr;
     }
 
-    ITfCategoryMgr* categories = nullptr;
-    hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-        IID_PPV_ARGS(&categories));
+    ITfInputProcessorProfiles* profiles = nullptr;
+    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&profiles));
+    diagUnregisterStep("CoCreateInstance(InputProcessorProfiles)", hr);
     if (SUCCEEDED(hr)) {
-        hr = categories->UnregisterCategory(CLSID_VikeyTextService,
-            GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyProfile);
+        hr = profiles->Unregister(CLSID_VikeyTextService);
+        diagUnregisterStep("Unregister", hr);
         if (FAILED(hr) && SUCCEEDED(result)) result = hr;
-        categories->Release();
+        profiles->Release();
     } else if (SUCCEEDED(result)) {
         result = hr;
     }

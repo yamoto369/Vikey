@@ -24,6 +24,9 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
     }
 
+    // Ask the TIP DLL to print per-step HRESULTs for register/unregister.
+    SetEnvironmentVariableW(L"VIKEY_TSF_DIAG", L"1");
+
     HMODULE module = LoadLibraryW(argv[1]);
     check("LoadLibrary", module != nullptr);
     if (!module) { CoUninitialize(); return 1; }
@@ -167,7 +170,7 @@ int wmain(int argc, wchar_t** argv) {
         ITfInputProcessorProfileMgr* profileMgr = nullptr;
         hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
             CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profileMgr));
-        std::printf("Create profile manager HRESULT = 0x%08lX\\n",
+        std::printf("Create profile manager HRESULT = 0x%08lX\n",
             static_cast<unsigned long>(hr));
         check("create TSF profile manager for cleanup", SUCCEEDED(hr) && profileMgr != nullptr);
         if (profileMgr) {
@@ -175,12 +178,12 @@ int wmain(int argc, wchar_t** argv) {
                 hr = profileMgr->DeactivateProfile(TF_PROFILETYPE_INPUTPROCESSOR,
                     currentLangId, clsid, profileGuid, nullptr,
                     TF_IPPMF_FORPROCESS | TF_IPPMF_DISABLEPROFILE);
-                std::printf("DeactivateProfile HRESULT = 0x%08lX\\n",
+                std::printf("DeactivateProfile HRESULT = 0x%08lX\n",
                     static_cast<unsigned long>(hr));
                 check("deactivate Vikey test profile", SUCCEEDED(hr));
             }
             hr = profileMgr->ReleaseInputProcessor(clsid, 0);
-            std::printf("ReleaseInputProcessor HRESULT = 0x%08lX\\n",
+            std::printf("ReleaseInputProcessor HRESULT = 0x%08lX\n",
                 static_cast<unsigned long>(hr));
             check("release Vikey TSF input processor", SUCCEEDED(hr));
             profileMgr->Release();
