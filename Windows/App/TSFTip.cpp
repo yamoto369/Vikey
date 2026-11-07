@@ -183,6 +183,16 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
         }
         profiles->Release();
     }
+    if (SUCCEEDED(hr)) {
+        ITfCategoryMgr* categories = nullptr;
+        hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+            IID_ITfCategoryMgr, reinterpret_cast<void**>(&categories));
+        if (SUCCEEDED(hr)) {
+            hr = categories->RegisterCategory(CLSID_VikeyTextService,
+                GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyProfile);
+            categories->Release();
+        }
+    }
     if (FAILED(hr)) {
         wchar_t clsid[64] = {};
         StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
@@ -203,6 +213,15 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
         if (FAILED(hr) && hr != CONNECT_E_NOCONNECTION) result = hr;
         profiles->Release();
     } else result = hr;
+    ITfCategoryMgr* categories = nullptr;
+    hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITfCategoryMgr, reinterpret_cast<void**>(&categories));
+    if (SUCCEEDED(hr)) {
+        hr = categories->UnregisterCategory(CLSID_VikeyTextService,
+            GUID_TFCAT_TIP_KEYBOARD, GUID_VikeyProfile);
+        if (FAILED(hr) && SUCCEEDED(result)) result = hr;
+        categories->Release();
+    } else if (SUCCEEDED(result)) result = hr;
     wchar_t clsid[64] = {};
     StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
     wchar_t keyPath[128] = {};
