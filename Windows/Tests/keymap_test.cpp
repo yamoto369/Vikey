@@ -3,6 +3,9 @@
 #include <cstdio>
 #include "../App/KeyMap.h"
 
+using vikey::engineKey;
+using vikey::unmodeledKeyEndsWord;
+
 static int failures = 0;
 static void expect(const char* name, Uint16 got, Uint16 want) {
     if (got != want) {
