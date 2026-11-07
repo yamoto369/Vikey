@@ -421,15 +421,7 @@ static void runEditScenario(const char* name, const std::wstring& typed, const s
     std::printf("%s: typed=\"%s\" result=\"%s\" (%s) foreground=%s\n", name, utf8(typed).c_str(),
         utf8(got).c_str(), escaped(got).c_str(), GetForegroundWindow() == g_window ? "yes" : "NO");
     if (got == expected) { check((std::string(name) + ": text is \"" + utf8(expected) + "\"").c_str(), true); return; }
-    // Known limitation: a legacy (IMM-bridged) control does not expose the text typed before the
-    // current key, so the TIP cannot rewrite it. Informational until the TIP uses compositions;
-    // set VIKEY_TSF_STRICT_EDIT=1 to make it a failure.
-    wchar_t strict[8] = {};
-    if (GetEnvironmentVariableW(L"VIKEY_TSF_STRICT_EDIT", strict, _countof(strict)) != 0) {
-        check((std::string(name) + ": text is \"" + utf8(expected) + "\"").c_str(), false);
-    } else {
-        std::printf("WARN %s: expected \"%s\" (known limitation, not counted)\n", name, utf8(expected).c_str());
-    }
+    check((std::string(name) + ": text is \"" + utf8(expected) + "\"").c_str(), false);
 }
 
 static bool cleanupRegistration() {
@@ -503,7 +495,7 @@ int wmain() {
         store->Release();
     }
 
-    runEditScenario("win32 EDIT control through SendInput", L"vieetj nams ddi", L"vi\u1ec7t n\u00e1m \u0111i");
+    runEditScenario("win32 EDIT control through SendInput", L"vieetj nams ddi ", L"vi\u1ec7t n\u00e1m \u0111i ");
 
     if (g_window) DestroyWindow(g_window);
     threadMgr->Deactivate();
