@@ -230,8 +230,10 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profileMgr));
     if (SUCCEEDED(hr)) {
-        hr = profileMgr->ReleaseInputProcessor(CLSID_VikeyTextService, 0);
-        if (FAILED(hr)) result = hr;
+        // ReleaseInputProcessor is best-effort here. TSF may return E_FAIL
+        // when no ITfTextInputProcessorEx instance is retained; the actual
+        // unregister operations below determine whether cleanup succeeded.
+        profileMgr->ReleaseInputProcessor(CLSID_VikeyTextService, 0);
         profileMgr->Release();
     } else {
         result = hr;
