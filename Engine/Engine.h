@@ -104,19 +104,19 @@ extern int vAutoSwitchByTyping;
  * -1: no request, 0: switch to English, 1: switch to Vietnamese.
  * The platform layer applies it after sending the key's output, then resets it to -1.
  */
-extern int vAutoSwitchRequest;
+extern thread_local int vAutoSwitchRequest;
 
 /**
  * What was on screen before the last automatic correction (engine character data),
  * so the platform can put it back when the user immediately presses the switch hotkey.
  */
-extern Uint32 vAutoSwitchUndoData[MAX_BUFF];
-extern int vAutoSwitchUndoCount;
+extern thread_local Uint32 vAutoSwitchUndoData[MAX_BUFF];
+extern thread_local int vAutoSwitchUndoCount;
 /** The keys of the last word auto switch put back to English (so the next word can look back on it). */
-extern Uint32 vAutoSwitchRestoredKeys[];
-extern int vAutoSwitchRestoredCount;
+extern thread_local Uint32 vAutoSwitchRestoredKeys[];
+extern thread_local int vAutoSwitchRestoredCount;
 /** Set by the platform: the previous word passed to vAutoSwitchCheckEnglishWord was put back to English by auto switch. */
-extern bool vAutoSwitchPrevRestored;
+extern thread_local bool vAutoSwitchPrevRestored;
 /** Capitalised mid-sentence counts for ties (D37, experiment): "form<TAB>count" lines. */
 void vAutoSwitchSetCapitalised(const char* path, const int& minCount);
 
@@ -175,7 +175,7 @@ bool vAutoSwitchIsVietnameseSpelling(const char* letters);
 /** Early Switch (D28): 1 = the word can only be Vietnamese, 0 = only English, -1 = either or neither. */
 int vAutoSwitchWordSide(const Uint32* keys, const int& count);
 /** The side of the word just finished in Vietnamese mode with nothing to fix (set at its space), -1 if none. */
-extern int vAutoSwitchLastSide;
+extern thread_local int vAutoSwitchLastSide;
 /** Word pairs for ties (D30, experiment): load "prev<TAB>next<TAB>count" lines; weight 0 = off. */
 void vAutoSwitchSetBigrams(const char* path, const float& weight, const int& minCount);
 /** Word triples for ties (D34, experiment): "w1<TAB>w2<TAB>w3<TAB>count" lines; tried before word pairs. */

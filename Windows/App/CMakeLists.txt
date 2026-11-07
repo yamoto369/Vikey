@@ -39,9 +39,17 @@ add_executable(vikey_tsf_policy_test ../Tests/tsf_policy_test.cpp)
 target_include_directories(vikey_tsf_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(vikey_tsf_policy_test PRIVATE UNICODE _UNICODE)
 
-# Initial in-process TSF COM DLL. It is deliberately pass-through until the
-# TSF adapter/edit-session implementation is complete.
+# Thread-aware adapter from TSF key events to the shared typing engine.
+add_library(vikey_tsf_engine_adapter STATIC TsfEngineAdapter.cpp TsfEngineRuntime.cpp)
+target_include_directories(vikey_tsf_engine_adapter PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../Engine
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../Engine/platforms)
+target_link_libraries(vikey_tsf_engine_adapter PUBLIC vikey_engine)
+
+# Initial in-process TSF COM DLL. Key callbacks remain pass-through until
+# the edit-session integration is implemented and tested.
 add_library(vikey_tsf MODULE TSFTip.cpp)
+target_link_libraries(vikey_tsf PRIVATE vikey_tsf_engine_adapter)
 target_include_directories(vikey_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(vikey_tsf PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(vikey_tsf PRIVATE ole32 oleaut32 advapi32 uuid)
@@ -55,3 +63,8 @@ add_executable(vikey_tsf_com_test ../Tests/tsf_com_test.cpp)
 target_compile_definitions(vikey_tsf_com_test PRIVATE UNICODE _UNICODE)
 target_link_libraries(vikey_tsf_com_test PRIVATE ole32 uuid)
 add_dependencies(vikey_tsf_com_test vikey_tsf)
+
+# Pure tests for Telex output plans and per-thread engine state isolation.
+add_executable(vikey_tsf_engine_test ../Tests/tsf_engine_test.cpp)
+target_include_directories(vikey_tsf_engine_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vikey_tsf_engine_test PRIVATE vikey_tsf_engine_adapter)

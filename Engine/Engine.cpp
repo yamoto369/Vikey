@@ -73,9 +73,9 @@ vKeyHookState HookState;
  */
 static Uint32 TypingWord[MAX_BUFF];
 static Byte _index = 0;
-static vector<Uint32> _longWordHelper; //save the word when _index >= MAX_BUFF
-static list<vector<Uint32>> _typingStates; //Aug 28th, 2019: typing helper, save long state of Typing word, can go back and modify the word
-vector<Uint32> _typingStatesData;
+static thread_local vector<Uint32> _longWordHelper; //save the word when _index >= MAX_BUFF
+static thread_local list<vector<Uint32>> _typingStates; //Aug 28th, 2019: typing helper, save long state of Typing word, can go back and modify the word
+thread_local vector<Uint32> _typingStatesData;
 
 /**
  * Use for restore key if invalid word
@@ -112,7 +112,7 @@ static bool isCheckedGrammar;
 static bool _isCaps = false;
 static int _spaceCount = 0; //add: July 30th, 2019
 static bool _isCharKeyCode;
-static vector<Uint32> _specialChar;
+static thread_local vector<Uint32> _specialChar;
 static bool _useSpellCheckingBefore;
 
 //function prototype
