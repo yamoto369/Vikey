@@ -44,12 +44,12 @@ jobs:
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File Windows/scan-defender.ps1 -Paths "Windows/build/App/Vikey.exe,Windows/build/App/VikeyTsf-x64.dll"
         shell: pwsh
 
-      - name: Show TSF logs after a failure
-        if: failure()
+      - name: Show TSF logs
+        if: always()
         run: |
           Get-ChildItem Windows/build/App/Logs -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object {
             "=== $($_.Name) ==="
-            Get-Content $_.FullName -Tail 200
+            Get-Content $_.FullName -Tail 400
           }
         shell: pwsh
 
