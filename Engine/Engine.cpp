@@ -58,7 +58,7 @@ static const Uint16 TelexKey[11] = {KEY_S, KEY_F, KEY_R, KEY_X, KEY_J, KEY_A, KE
 #define GET getCharacterCode
 
 //Data to sendback to main program
-vKeyHookState HookState;
+thread_local vKeyHookState HookState;
 
 //private data
 /**
@@ -71,8 +71,8 @@ vKeyHookState HookState;
  * bit 24: is standalone key? (w, [, ])
  * bit 25: is character code or keyboard code; 1: character code; 0: keycode
  */
-static Uint32 TypingWord[MAX_BUFF];
-static Byte _index = 0;
+static thread_local Uint32 TypingWord[MAX_BUFF];
+static thread_local Byte _index = 0;
 static thread_local vector<Uint32> _longWordHelper; //save the word when _index >= MAX_BUFF
 static thread_local list<vector<Uint32>> _typingStates; //Aug 28th, 2019: typing helper, save long state of Typing word, can go back and modify the word
 thread_local vector<Uint32> _typingStatesData;
@@ -80,38 +80,38 @@ thread_local vector<Uint32> _typingStatesData;
 /**
  * Use for restore key if invalid word
  */
-static Uint32 KeyStates[MAX_BUFF];
+static thread_local Uint32 KeyStates[MAX_BUFF];
 //auto switch: keys Telex undid and dropped from the key states ("eee" -> "ee", "deepseek"), and where each
 //was, oldest first (each position counts the keys kept at that moment)
 #define AS_MAX_DROPS 4
-static int _asDropN = 0;
-static int _asDropPos[AS_MAX_DROPS];
-static Uint32 _asDropKey[AS_MAX_DROPS];
+static thread_local int _asDropN = 0;
+static thread_local int _asDropPos[AS_MAX_DROPS];
+static thread_local Uint32 _asDropKey[AS_MAX_DROPS];
 /** The keys as typed: the key states with the dropped keys put back. Returns how many. */
 static int asStatesWithDrops(Uint32* full, const int& maxN);
-static Byte _stateIndex = 0;
-static bool _statesLost = false; //a word of more than MAX_BUFF keys: KeyStates lost its first keys
+static thread_local Byte _stateIndex = 0;
+static thread_local bool _statesLost = false; //a word of more than MAX_BUFF keys: KeyStates lost its first keys
 
-static bool tempDisableKey = false;
-static int capsElem;
-static int key;
-static int markElem;
-static bool isCorect = false;
-static bool isChanged = false;
-static Byte vowelCount = 0;
-static Byte vowelStartIndex = 0;
-static Byte vowelEndIndex = 0;
-static Byte vowelWillSetMark = 0;
-static int i, ii, iii;
-static int j;
-static int k, kk;
-static int l;
-static bool isRestoredW;
-static Uint16 keyForAEO;
-static bool isCheckedGrammar;
-static bool _isCaps = false;
-static int _spaceCount = 0; //add: July 30th, 2019
-static bool _isCharKeyCode;
+static thread_local bool tempDisableKey = false;
+static thread_local int capsElem;
+static thread_local int key;
+static thread_local int markElem;
+static thread_local bool isCorect = false;
+static thread_local bool isChanged = false;
+static thread_local Byte vowelCount = 0;
+static thread_local Byte vowelStartIndex = 0;
+static thread_local Byte vowelEndIndex = 0;
+static thread_local Byte vowelWillSetMark = 0;
+static thread_local int i, ii, iii;
+static thread_local int j;
+static thread_local int k, kk;
+static thread_local int l;
+static thread_local bool isRestoredW;
+static thread_local Uint16 keyForAEO;
+static thread_local bool isCheckedGrammar;
+static thread_local bool _isCaps = false;
+static thread_local int _spaceCount = 0; //add: July 30th, 2019
+static thread_local bool _isCharKeyCode;
 static thread_local vector<Uint32> _specialChar;
 static bool _useSpellCheckingBefore;
 
@@ -119,7 +119,7 @@ static bool _useSpellCheckingBefore;
 void findAndCalculateVowel(const bool& forGrammar=false);
 void insertMark(const Uint32& markMask, const bool& canModifyFlag=true);
 
-static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+static thread_local std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 wstring utf8ToWideString(const string& str) {
     return converter.from_bytes(str.c_str());
 }
@@ -158,10 +158,10 @@ void setKeyData(const Byte& index, const Uint16& keyCode, const bool& isCaps) {
     TypingWord[index] = keyCode | (isCaps ? CAPS_MASK : 0);
 }
 
-bool _spellingOK = false;
-bool _spellingFlag = false;
-bool _spellingVowelOK = false;
-Byte _spellingEndIndex = 0;
+thread_local bool _spellingOK = false;
+thread_local bool _spellingFlag = false;
+thread_local bool _spellingVowelOK = false;
+thread_local Byte _spellingEndIndex = 0;
 
 /** Teencode spelling (D53, off by default): chat forms count as Vietnamese so they aren't put back to their keys:
  *  z / dz for d ("zui zẻ", "zô", "dzô"), the open rimes "ie" ("bíe") and "oy" ("gòy"), and k after i or ư ("thík",
@@ -169,7 +169,7 @@ Byte _spellingEndIndex = 0;
 int vTeencode = 1;   //on by default (Tony, 2026-10-31)
 int vTelexStyle = 0;  //Telex (D56); 1 and 2 are the Simple Telex styles from OpenKey
 #include "TeencodeData.h"
-static bool _teenRule = false;   //this word is valid only by a teencode rule: kept at its end only if it's a known word
+static thread_local bool _teenRule = false;   //this word is valid only by a teencode rule: kept at its end only if it's a known word
 /** Is the word in TypingWord a known teencode word? (letters with ^ / +, tone digit last; see build_teencode.py) */
 static bool asTeenKnown() {
     char w[MAX_BUFF * 2 + 2]; int n = 0; char tone = 0;
@@ -1055,7 +1055,7 @@ void insertW(const Uint16& data, const bool& isCaps) {
     }
 }
 
-static bool _appendedStandalone = false;   //this key only added ư/ơ at the end: it isn't on screen yet (D52)
+static thread_local bool _appendedStandalone = false;   //this key only added ư/ơ at the end: it isn't on screen yet (D52)
 void reverseLastStandaloneChar(const Uint32& keyCode, const bool& isCaps) {
     _appendedStandalone = true;
     hCode = vWillProcess;
@@ -1066,7 +1066,7 @@ void reverseLastStandaloneChar(const Uint32& keyCode, const bool& isCaps) {
     hData[0] = GET(TypingWord[_index - 1]);
 }
 
-static bool _afterDigit = false;   //the word started right after a digit: a lone w is a unit (100W), not ư (D33)
+static thread_local bool _afterDigit = false;   //the word started right after a digit: a lone w is a unit (100W), not ư (D33)
 void checkForStandaloneChar(const Uint16& data, const bool& isCaps, const Uint32& keyWillReverse) {
     if (_index > 0 && CHR(_index - 1) == keyWillReverse && TypingWord[_index - 1] & TONEW_MASK) {   //w, [ or ] can start a word
         hCode = vWillProcess;
@@ -1287,13 +1287,13 @@ void vSetCheckSpelling() {
 #define AS_EN_FLOOR 99      //no floor: a tie converts when the Vietnamese reading is AS_PREFER points more common (D22; was 0)
 #endif
 
-int vAutoSwitchRequest = -1;
-Uint32 vAutoSwitchUndoData[MAX_BUFF];
-int vAutoSwitchUndoCount = 0;
+thread_local int vAutoSwitchRequest = -1;
+thread_local Uint32 vAutoSwitchUndoData[MAX_BUFF];
+thread_local int vAutoSwitchUndoCount = 0;
 
 static char _asLetter[256];
-static bool _asLetterReady = false;
-static bool _asWordStartOk = true;   //the current word began after a space, Enter, Tab or a fresh start (not inside foo.bar or my_var)
+static thread_local bool _asLetterReady = false;
+static thread_local bool _asWordStartOk = true;   //the current word began after a space, Enter, Tab or a fresh start (not inside foo.bar or my_var)
 
 /* Look-back: when a word confidently switches the language, the 1-2 words typed just before it
  * (separated by single spaces) are fixed too if they were ambiguous, e.g. "thí make" -> "this make".
@@ -1317,8 +1317,8 @@ struct AsWord {
     bool same;              //looks the same in both modes (nothing to fix)
 };
 static AsWord _asPrev[AS_LOOKBACK_WORDS];
-static int _asPrevCount = 0;
-static Uint32 _asConverted[MAX_BUFF]; static int _asConvertedN = 0;   //the word auto switch just put in Vietnamese
+static thread_local int _asPrevCount = 0;
+static thread_local Uint32 _asConverted[MAX_BUFF]; static thread_local int _asConvertedN = 0;   //the word auto switch just put in Vietnamese
 static void navForget();
 
 void vAutoSwitchForget() {
@@ -1422,7 +1422,7 @@ static inline bool asEnabled() {
 }
 
 /** Vietnamese mode: a word was ended by a single space and stays Vietnamese. Keep it for look-back. */
-int vAutoSwitchLastSide = -1;
+thread_local int vAutoSwitchLastSide = -1;
 
 // ---- Word pairs for ties (D30, experiment) ---------------------------------------------------------------
 // For a word that is a word both ways (bus/bú, been/bên), how often each reading follows the previous word
@@ -1609,12 +1609,12 @@ static void asRememberWord() {
 }
 
 /** Vietnamese mode, at a word break: are the raw keys an English word the user clearly meant? */
-static Uint32 _asDoubleKeys[MAX_BUFF];   //the keys of the word a doubled tone key switched to English, both presses last
-static int _asDoubleCount = 0;
-static int _asDoubleFirst = -1;      //where the first press is in _asDoubleKeys
-static bool _asDoubleBoth = false;   //both presses are on screen
+static thread_local Uint32 _asDoubleKeys[MAX_BUFF];   //the keys of the word a doubled tone key switched to English, both presses last
+static thread_local int _asDoubleCount = 0;
+static thread_local int _asDoubleFirst = -1;      //where the first press is in _asDoubleKeys
+static thread_local bool _asDoubleBoth = false;   //both presses are on screen
 static bool asFewCapitals(const Uint32* keys, const int& count);
-static bool _asApostrophe = false;   //the word ends at an apostrophe: allow contraction stems
+static thread_local bool _asApostrophe = false;   //the word ends at an apostrophe: allow contraction stems
 
 static int asStatesWithDrops(Uint32* full, const int& maxN) {
     //newest drop first: an older drop's position never counts a newer dropped key
@@ -1799,9 +1799,9 @@ static bool asHyphenRestore() {
 
 /** Puts the raw keys back (like "restore if wrong spelling") and asks for English.
  *  Ambiguous words just before it (look-back) are put back to their keys too. */
-bool vAutoSwitchPrevRestored = false;        //previous[0] of the next English-word check is a word auto switch put back to English
-Uint32 vAutoSwitchRestoredKeys[MAX_BUFF];   //the keys of the word just put back to English (D35: a later word can look back on it)
-int vAutoSwitchRestoredCount = 0;
+thread_local bool vAutoSwitchPrevRestored = false;        //previous[0] of the next English-word check is a word auto switch put back to English
+thread_local Uint32 vAutoSwitchRestoredKeys[MAX_BUFF];   //the keys of the word just put back to English (D35: a later word can look back on it)
+thread_local int vAutoSwitchRestoredCount = 0;
 static void asRestoreToEnglish(const int& handleCode) {
     vAutoSwitchRestoredCount = 0;
     if (_stateIndex > 0 && _stateIndex < MAX_BUFF) {
@@ -2074,8 +2074,8 @@ bool vAutoSwitchCheckEnglishWord(const Uint32* keys, const int& count) {
  *  state from before the first ← and puts it back when the cursor returns, instead of starting a new word there
  *  ("th ← → if" gave "thif"). Only plain arrows within the word count; anything else forgets it. */
 static AsEngineState* _navSaved = NULL;
-static int _navOffset = 0;      //how far left of the word's end the cursor is (≤ 0)
-static int _navPrevCount = 0;  //the look-back words (they're before the word's end, not before the cursor while away)
+static thread_local int _navOffset = 0;      //how far left of the word's end the cursor is (≤ 0)
+static thread_local int _navPrevCount = 0;  //the look-back words (they're before the word's end, not before the cursor while away)
 static void navForget() { if (_navSaved) { delete _navSaved; _navSaved = NULL; } _navOffset = 0; }
 
 void vKeyHandleEvent(const vKeyEvent& event,
