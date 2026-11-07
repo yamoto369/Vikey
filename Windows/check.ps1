@@ -27,7 +27,12 @@ $keymapTest = Join-Path $root 'Windows/build/App/vikey_keymap_test.exe'
 & $keymapTest
 if ($LASTEXITCODE -ne 0) { throw 'Windows key adapter unit tests failed' }
 
-Write-Host '== TSF context eligibility unit tests =='`n$tsfPolicyTest = Join-Path $root 'Windows/build/App/vikey_tsf_policy_test.exe'`n& $tsfPolicyTest`nif ($LASTEXITCODE -ne 0) { throw 'TSF context eligibility unit tests failed' }`n`nWrite-Host '== Windows input policy unit tests =='
+Write-Host '== TSF context eligibility unit tests =='
+$tsfPolicyTest = Join-Path $root 'Windows/build/App/vikey_tsf_policy_test.exe'
+& $tsfPolicyTest
+if ($LASTEXITCODE -ne 0) { throw 'TSF context eligibility unit tests failed' }
+
+Write-Host '== Windows input policy unit tests =='
 $inputPolicyTest = Join-Path $root 'Windows/build/App/vikey_input_policy_test.exe'
 & $inputPolicyTest
 if ($LASTEXITCODE -ne 0) { throw 'Windows input policy unit tests failed' }
