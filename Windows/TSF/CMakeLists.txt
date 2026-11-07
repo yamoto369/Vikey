@@ -12,7 +12,7 @@ target_include_directories(vikey_tsf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../Engine
   ${CMAKE_CURRENT_SOURCE_DIR}/../../Engine/platforms
 )
-target_link_libraries(vikey_tsf PRIVATE vikey_engine msctf ole32 oleaut32 advapi32 shell32)
+target_link_libraries(vikey_tsf PRIVATE vikey_engine uuid ole32 oleaut32 advapi32 shell32)
 target_compile_definitions(vikey_tsf PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(vikey_tsf PRIVATE /utf-8 /W4 /EHsc)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64" OR CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")

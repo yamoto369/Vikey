@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <msctf.h>
 #include <textstor.h>
+#include <textstor.h>
 #include <oleauto.h>
 #include <atomic>
 #include <algorithm>
@@ -33,13 +34,13 @@ public:
 
     HRESULT STDMETHODCALLTYPE AdviseSink(REFIID iid, IUnknown* unknown, DWORD mask) override {
         if (!unknown || iid != IID_ITextStoreACPSink) return E_INVALIDARG;
-        if (sink_) return CONNECT_E_ADVISELIMIT;
+        if (sink_) return E_UNEXPECTED;
         HRESULT hr = unknown->QueryInterface(iid, reinterpret_cast<void**>(&sink_));
         if (SUCCEEDED(hr)) sinkMask_ = mask;
         return hr;
     }
     HRESULT STDMETHODCALLTYPE UnadviseSink(IUnknown* unknown) override {
-        if (!sink_) return CONNECT_E_NOCONNECTION;
+        if (!sink_) return E_UNEXPECTED;
         IUnknown* existing = nullptr;
         HRESULT hr = sink_->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&existing));
         if (FAILED(hr)) return hr;
@@ -88,7 +89,7 @@ public:
         if (index != TF_DEFAULT_SELECTION && index != 0) return TS_E_NOSELECTION;
         selections[0].acpStart = selectionStart_;
         selections[0].acpEnd = selectionEnd_;
-        selections[0].style.ase = TF_AE_END;
+        selections[0].style.ase = TS_AE_END;
         selections[0].style.fInterimChar = FALSE;
         *fetched = 1;
         return S_OK;
@@ -117,7 +118,7 @@ public:
         if (end < 0 || end > length) end = length;
         if (end < start) return TS_E_INVALIDPOS;
         const ULONG available = (ULONG)(end - start);
-        const ULONG copied = plain ? std::min(available, plainCapacity) : 0;
+        const ULONG copied = plain ? (available < plainCapacity ? available : plainCapacity) : 0;
         if (copied) std::memcpy(plain, text_.data() + start, copied * sizeof(WCHAR));
         if (plainCopied) *plainCopied = copied;
         if (runs && runCapacity && copied) {
@@ -348,13 +349,13 @@ int wmain() {
         const WPARAM keys[] = {'V', 'I', 'E', 'T', 'S'};
         for (WPARAM key : keys) {
             BOOL eaten = FALSE;
-            hr = keystrokes->TestKeyDown(context, key, 0, &eaten);
+            hr = keystrokes->TestKeyDown(key, 0, &eaten);
             if (FAILED(hr) || !eaten) {
                 writeLog("FAIL: TSF TestKeyDown did not claim a Telex key");
                 goto Cleanup;
             }
             eaten = FALSE;
-            hr = keystrokes->KeyDown(context, key, 0, &eaten);
+            hr = keystrokes->KeyDown(key, 0, &eaten);
             if (FAILED(hr) || !eaten) {
                 writeLog("FAIL: TSF KeyDown did not consume a Telex key");
                 goto Cleanup;
