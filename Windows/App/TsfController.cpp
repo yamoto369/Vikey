@@ -3,6 +3,7 @@
 #include <msctf.h>
 #include <objbase.h>
 #include <string>
+#include <cstdio>
 
 namespace {
 const CLSID kVikeyClsid =
@@ -221,6 +222,7 @@ bool sync(bool vietnameseEnabled) {
     // If an application has a different per-window keyboard layout, retain
     // the legacy hook for that window rather than changing its layout.
     if (!language || language != foreground || !supportedLanguage(language)) {
+        std::fprintf(stderr, "[TsfController] language mismatch/unsupported: current=%04X foreground=%04X\\n", language, foreground);
         deactivateActiveProfile();
         return false;
     }
@@ -236,25 +238,29 @@ bool sync(bool vietnameseEnabled) {
     if (FAILED(hr) || !profiles) return false;
     const bool ready = ensureLanguageProfile(profiles, language);
     profiles->Release();
-    if (!ready) return false;
+    if (!ready) { std::fprintf(stderr, "[TsfController] language profile setup failed\\n"); return false; }
 
     ITfInputProcessorProfileMgr* manager = nullptr;
     hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&manager));
-    if (FAILED(hr) || !manager) return false;
+    if (FAILED(hr) || !manager) { std::fprintf(stderr, "[TsfController] profile manager creation failed: 0x%08lX\\n", static_cast<unsigned long>(hr)); return false; }
     hr = manager->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, language,
         kVikeyClsid, kVikeyProfile, nullptr,
         TF_IPPMF_FORSESSION | TF_IPPMF_ENABLEPROFILE);
     manager->Release();
+    std::fprintf(stderr, "[TsfController] ActivateProfile: 0x%08lX\\n", static_cast<unsigned long>(hr));
     if (FAILED(hr)) return false;
 
     ITfInputProcessorProfileMgr* verify = nullptr;
     hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&verify));
-    if (FAILED(hr) || !verify) return false;
+    if (FAILED(hr) || !verify) { std::fprintf(stderr, "[TsfController] verify manager creation failed: 0x%08lX\\n", static_cast<unsigned long>(hr)); return false; }
     TF_INPUTPROCESSORPROFILE active{};
     hr = verify->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active);
     verify->Release();
+    std::fprintf(stderr, "[TsfController] GetActiveProfile: hr=0x%08lX lang=%04X clsidMatch=%d profileMatch=%d\\n",
+        static_cast<unsigned long>(hr), active.langid, IsEqualGUID(active.clsid, kVikeyClsid),
+        IsEqualGUID(active.guidProfile, kVikeyProfile));
     if (FAILED(hr) || !IsEqualGUID(active.clsid, kVikeyClsid) ||
         !IsEqualGUID(active.guidProfile, kVikeyProfile) || active.langid != language)
         return false;
