@@ -2,9 +2,35 @@
 #include <windows.h>
 #include <msctf.h>
 #include <oleauto.h>
+#include <cstdio>
 #include <string>
+#include "Prefs.h"
 
 namespace {
+
+void logRegistration(const char* eventName, HRESULT hr) {
+    wchar_t directory[MAX_PATH] = {};
+    DWORD length = GetEnvironmentVariableW(L"VIKEY_TSF_LOG_DIR", directory, MAX_PATH);
+    if (!length || length >= MAX_PATH) {
+        const std::wstring root = vikey::prefs::appDataDir() + L"\\Logs";
+        wcsncpy_s(directory, root.c_str(), _TRUNCATE);
+    }
+    CreateDirectoryW(directory, nullptr);
+    const std::wstring path = std::wstring(directory) + L"\\tsf.log";
+    HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    char line[256] = {};
+    SYSTEMTIME now; GetLocalTime(&now);
+    const int count = snprintf(line, sizeof(line),
+        "%04u-%02u-%02u %02u:%02u:%02u.%03u event=%s hr=0x%08lX\r\n",
+        now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
+        now.wMilliseconds, eventName, (unsigned long)hr);
+    DWORD written = 0;
+    WriteFile(file, line, (DWORD)(count > 0 ? count : 0), &written, nullptr);
+    CloseHandle(file);
+}
+
 std::wstring guidString(REFGUID guid) {
     wchar_t value[64] = {};
     StringFromGUID2(guid, value, 64);
@@ -90,13 +116,14 @@ HRESULT registerProfiles() {
 }
 extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer() {
     HRESULT hr = registerComClass();
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) { logRegistration("register-com-class-failed", hr); return hr; }
     const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool uninitialize = init == S_OK || init == S_FALSE;
     if (init == RPC_E_CHANGED_MODE) hr = registerProfiles();
     else if (SUCCEEDED(init)) hr = registerProfiles();
     else hr = init;
     if (uninitialize) CoUninitialize();
+    logRegistration(SUCCEEDED(hr) ? "register-profiles" : "register-profiles-failed", hr);
     return hr;
 }
 extern "C" __declspec(dllexport) HRESULT __stdcall DllUnregisterServer() {

@@ -17,6 +17,19 @@ static void logLine(const char* line) {
     WriteFile(file, "\r\n", 2, &written, nullptr);
     CloseHandle(file);
 }
+
+static void pumpMessagesFor(DWORD durationMs) {
+    const ULONGLONG end = GetTickCount64() + durationMs;
+    while (GetTickCount64() < end) {
+        MSG message;
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        Sleep(1);
+    }
+}
+
 static std::wstring siblingTipPath() {
     wchar_t exe[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -52,7 +65,7 @@ int wmain() {
     if (!window) { logLine("SKIP: RichEdit window unavailable"); FreeLibrary(tip); return 77; }
     SetForegroundWindow(window);
     SetFocus(window);
-    Sleep(200);
+    pumpMessagesFor(200);
     if (GetForegroundWindow() != window) {
         logLine("SKIP: runner did not grant foreground desktop access");
         DestroyWindow(window);
@@ -68,14 +81,17 @@ int wmain() {
         input[i * 2 + 1].ki.wVk = keys[i]; input[i * 2 + 1].ki.dwFlags = KEYEVENTF_KEYUP;
     }
     const UINT sent = SendInput(10, input, sizeof(INPUT));
-    Sleep(300);
+    pumpMessagesFor(350);
     wchar_t text[64] = {};
     GetWindowTextW(window, text, 64);
     DestroyWindow(window);
     FreeLibrary(tip);
     if (sent != 10) { logLine("SKIP: SendInput did not deliver all key events"); return 77; }
     if (std::wstring(text) != L"viét") {
-        logLine("FAIL: RichEdit text does not equal viét");
+        char diagnostic[128] = {};
+        snprintf(diagnostic, sizeof(diagnostic), "FAIL: RichEdit text mismatch (sent=%u, length=%u)",
+            sent, (unsigned)wcslen(text));
+        logLine(diagnostic);
         return 1;
     }
     logLine("PASS: RichEdit received viét through the active TSF profile");

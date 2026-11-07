@@ -256,7 +256,12 @@ bool VikeyTextService::IsKeyboardDisabled() const {
             VARIANT value; VariantInit(&value);
             if (SUCCEEDED(compartment->GetValue(&value)) &&
                 ((value.vt == VT_I4 && value.lVal != 0) ||
-                 (value.vt == VT_UI4 && value.ulVal != 0))) disabled = true;
+                 (value.vt == VT_UI4 && value.ulVal != 0))) {
+                disabled = true;
+                VikeyTsfLog("keyboard-compartment-set", S_OK,
+                    IsEqualGUID(*id, GUID_COMPARTMENT_KEYBOARD_DISABLED) ? 1UL : 2UL,
+                    value.vt == VT_I4 ? (unsigned long)value.lVal : (unsigned long)value.ulVal);
+            }
             VariantClear(&value);
             compartment->Release();
         }
@@ -346,7 +351,18 @@ void VikeyTextService::PersistLanguage(bool notifyTray) {
 HRESULT VikeyTextService::OnTestKeyDown(ITfContext* context, WPARAM vk, LPARAM, BOOL* eaten) {
     if (!eaten) return E_POINTER;
     *eaten = FALSE;
-    if (!active_ || !context || IsKeyboardDisabled() || IsBlacklistedContext(context)) return S_OK;
+    if (!active_ || !context) {
+        VikeyTsfLog("test-key-no-context", E_UNEXPECTED, (unsigned long)vk);
+        return S_OK;
+    }
+    if (IsKeyboardDisabled()) {
+        VikeyTsfLog("test-key-disabled", S_OK, (unsigned long)vk);
+        return S_OK;
+    }
+    if (IsBlacklistedContext(context)) {
+        VikeyTsfLog("test-key-blacklisted", S_OK, (unsigned long)vk);
+        return S_OK;
+    }
     const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
     const bool win = (GetKeyState(VK_LWIN) & 0x8000) != 0 ||
@@ -356,6 +372,7 @@ HRESULT VikeyTextService::OnTestKeyDown(ITfContext* context, WPARAM vk, LPARAM, 
         return S_OK;
     }
     *eaten = (isTextKey(vk) || isNavigationKey(vk) || isPassthroughWordBreak(vk)) ? TRUE : FALSE;
+    VikeyTsfLog("test-key-routed", S_OK, (unsigned long)vk, *eaten ? 1UL : 0UL);
     return S_OK;
 }
 HRESULT VikeyTextService::OnKeyDown(ITfContext* context, WPARAM vk, LPARAM flags, BOOL* eaten) {
