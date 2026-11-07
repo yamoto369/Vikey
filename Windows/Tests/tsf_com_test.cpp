@@ -160,6 +160,31 @@ int wmain(int argc, wchar_t** argv) {
                 check("deactivate TSF thread manager", SUCCEEDED(threadMgr->Deactivate()));
             threadMgr->Release();
         }
+
+        // Explicitly deactivate the registered profile before unregistering
+        // it. Thread-manager deactivation alone does not necessarily disable
+        // the user's active language profile.
+        ITfInputProcessorProfileMgr* profileMgr = nullptr;
+        hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profileMgr));
+        std::printf("Create profile manager HRESULT = 0x%08lX\\n",
+            static_cast<unsigned long>(hr));
+        check("create TSF profile manager for cleanup", SUCCEEDED(hr) && profileMgr != nullptr);
+        if (profileMgr) {
+            if (languageProfileReady) {
+                hr = profileMgr->DeactivateProfile(TF_PROFILETYPE_INPUTPROCESSOR,
+                    currentLangId, clsid, profileGuid, nullptr,
+                    TF_IPPMF_FORPROCESS | TF_IPPMF_DISABLEPROFILE);
+                std::printf("DeactivateProfile HRESULT = 0x%08lX\\n",
+                    static_cast<unsigned long>(hr));
+                check("deactivate Vikey test profile", SUCCEEDED(hr));
+            }
+            hr = profileMgr->ReleaseInputProcessor(clsid, 0);
+            std::printf("ReleaseInputProcessor HRESULT = 0x%08lX\\n",
+                static_cast<unsigned long>(hr));
+            check("release Vikey TSF input processor", SUCCEEDED(hr));
+            profileMgr->Release();
+        }
         if (profiles) profiles->Release();
 
         if (registered) {
