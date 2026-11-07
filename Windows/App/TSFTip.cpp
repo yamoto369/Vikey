@@ -23,6 +23,60 @@ namespace {
 static const GUID kGuidPropInputScope =
     { 0x1713dd5a, 0x68e7, 0x4a5b, { 0x9a, 0xf6, 0x59, 0x2a, 0x59, 0x5c, 0x77, 0x8d } };
 
+// The TIP runs inside whatever application has focus, so it cannot use the
+// controller's log directory. Write beside this DLL instead, and only once per
+// process for each reason, to explain why a key was not turned into Vietnamese.
+static HMODULE thisModule() {
+    HMODULE module = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&thisModule), &module);
+    return module;
+}
+
+static void tipNote(unsigned id, const wchar_t* text) {
+    static std::atomic<unsigned long long> seen{0};
+    const unsigned long long bit = 1ULL << (id & 63);
+    if (seen.fetch_or(bit) & bit) return;
+
+    wchar_t dll[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameW(thisModule(), dll, MAX_PATH);
+    if (!length || length >= MAX_PATH) return;
+    std::wstring path(dll, length);
+    const size_t slash = path.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return;
+    path.resize(slash);
+    path += L"\\Logs";
+    CreateDirectoryW(path.c_str(), nullptr);
+    path += L"\\tsf-tip.log";
+
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const wchar_t* exeName = wcsrchr(exe, L'\\');
+    exeName = exeName ? exeName + 1 : exe;
+
+    SYSTEMTIME time{};
+    GetLocalTime(&time);
+    wchar_t line[1024] = {};
+    const int chars = swprintf_s(line, _countof(line),
+        L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%s pid=%lu] %s\r\n",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
+        time.wMilliseconds, exeName, static_cast<unsigned long>(GetCurrentProcessId()),
+        text ? text : L"");
+    if (chars <= 0) return;
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, line, chars, nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) return;
+    std::string utf8(static_cast<size_t>(bytes), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, line, chars, &utf8[0], bytes, nullptr, nullptr);
+    HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(file, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+    CloseHandle(file);
+}
+
 class VikeyEditSession final : public ITfEditSession {
 public:
     VikeyEditSession(ITfContext* context, vikey::tsf::EngineAdapter* adapter,
@@ -53,13 +107,14 @@ public:
         if (!context_ || !adapter_) return E_UNEXPECTED;
         TF_STATUS status{};
         HRESULT hr = context_->GetStatus(&status);
-        if (FAILED(hr)) return hr;
-        if (status.dwDynamicFlags & TF_SD_READONLY) return TS_E_READONLY;
+        if (FAILED(hr)) { tipNote(8, L"edit session: ITfContext::GetStatus failed"); return hr; }
+        if (status.dwDynamicFlags & TF_SD_READONLY) { tipNote(9, L"edit session: context is read-only"); return TS_E_READONLY; }
 
         TF_SELECTION selection{};
         ULONG fetched = 0;
         hr = context_->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
         if (FAILED(hr) || fetched != 1 || !selection.range) {
+            tipNote(10, L"edit session: no selection available (GetSelection failed)");
             if (selection.range) selection.range->Release();
             adapter_->reset();
             return FAILED(hr) ? hr : TF_E_NOSELECTION;
@@ -67,8 +122,16 @@ public:
 
         BOOL selectionEmpty = FALSE;
         hr = selection.range->IsEmpty(cookie, &selectionEmpty);
-        if (FAILED(hr) || !selectionEmpty || !isSafeInputContext(cookie, selection.range) || vikey::tsf::isSecureInputContext() || !vikey::tsf::isControllerRunning() ||
-            !vikey::tsf::shouldHandleKey(vikey::tsf::TextContextKind::Editable, vLanguage != 0, false)) {
+        unsigned declinedId = 0;
+        const wchar_t* declined = nullptr;
+        if (FAILED(hr)) { declinedId = 11; declined = L"edit session: IsEmpty failed"; }
+        else if (!selectionEmpty) { declinedId = 12; declined = L"edit session: text is selected, key left to the application"; }
+        else if (!isSafeInputContext(cookie, selection.range)) { declinedId = 13; declined = L"edit session: input scope not allowed or unavailable (see the input scope line)"; }
+        else if (vikey::tsf::isSecureInputContext()) { declinedId = 14; declined = L"edit session: controller marks the focused field as secure/unknown"; }
+        else if (!vikey::tsf::isControllerRunning()) { declinedId = 15; declined = L"edit session: Vikey controller not reachable"; }
+        else if (!vikey::tsf::shouldHandleKey(vikey::tsf::TextContextKind::Editable, vLanguage != 0, false)) { declinedId = 16; declined = L"edit session: policy refused the key"; }
+        if (declined) {
+            tipNote(declinedId, declined);
             selection.range->Release();
             adapter_->reset();
             return FAILED(hr) ? hr : S_OK;
@@ -77,6 +140,7 @@ public:
         vikey::tsf::EngineEdit edit =
             adapter_->processKey(virtualKey_, shift_, capsLock_, modified_);
         if (!edit.consume) {
+            tipNote(17, L"edit session: engine ran and passed the key through (normal for plain letters)");
             selection.range->Release();
             return S_OK;
         }
@@ -127,6 +191,7 @@ public:
         }
         replacement->Release();
         applied_ = true;
+        tipNote(18, L"edit session: first Vietnamese edit applied");
         return S_OK;
     }
 
@@ -139,13 +204,17 @@ private:
         ITfReadOnlyProperty* property = nullptr;
         hr = context->GetAppProperty(kGuidPropInputScope, &property);
         context->Release();
-        if (FAILED(hr) || !property) return false;
+        if (FAILED(hr) || !property) { tipNote(19, L"input scope: application exposes no input-scope property"); return false; }
 
         VARIANT value;
         VariantInit(&value);
         hr = property->GetValue(cookie, range, &value);
         property->Release();
         if (FAILED(hr) || value.vt != VT_UNKNOWN || !value.punkVal) {
+            wchar_t note[160] = {};
+            swprintf_s(note, _countof(note), L"input scope: property has no value (hr=0x%08lX vt=%u), treated as unsafe",
+                static_cast<unsigned long>(hr), static_cast<unsigned>(value.vt));
+            tipNote(20, note);
             VariantClear(&value);
             return false;
         }
@@ -167,6 +236,9 @@ private:
         bool safe = true;
         for (UINT i = 0; i < count; ++i) {
             if (!vikey::tsf::isAllowedInputScope(scopes[i])) {
+                wchar_t note[128] = {};
+                swprintf_s(note, _countof(note), L"input scope: scope %d is not allowed", static_cast<int>(scopes[i]));
+                tipNote(21, note);
                 safe = false;
                 break;
             }
@@ -256,8 +328,18 @@ public:
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
         refreshRuntimeSettings();
-        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() || !vikey::tsf::isControllerRunning() ||
-            vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
+        tipNote(0, L"OnTestKeyDown reached: TIP is loaded and receiving keys");
+        if (!context) { tipNote(1, L"declined: null context"); return S_OK; }
+        if (vLanguage == 0) { tipNote(2, L"declined: Vietnamese input is off (InputMethod=0)"); return S_OK; }
+        if (vikey::tsf::isCurrentAppBlacklisted()) { tipNote(3, L"declined: foreground app is blacklisted"); return S_OK; }
+        if (!vikey::tsf::isCurrentInputLanguageSupported()) { tipNote(4, L"declined: current keyboard language not supported"); return S_OK; }
+        if (!vikey::tsf::isControllerRunning()) {
+            tipNote(5, L"declined: Vikey controller not reachable (shared state cannot be opened, or controller is elevated/not running)");
+            return S_OK;
+        }
+        if (vikey::tsf::isSecureInputContext()) { tipNote(6, L"declined: controller marks the focused field as secure/unknown"); return S_OK; }
+        if (vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
+        tipNote(7, L"OnTestKeyDown accepted a key, OnKeyDown will run");
         *eaten = TRUE; // Request OnKeyDown; actual consumption is decided in the edit session.
         return S_OK;
     }
