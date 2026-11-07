@@ -13,7 +13,7 @@ static void check(const char* name, bool ok) {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc != 2) {
-        std::fwprintf(stderr, L"Usage: tsf_com_test.exe <VikeyTsf.dll>\n");
+        std::fprintf(stderr, "Usage: tsf_com_test.exe <VikeyTsf.dll>\\n");
         return 2;
     }
     HMODULE module = LoadLibraryW(argv[1]);
