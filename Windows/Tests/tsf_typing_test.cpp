@@ -10,6 +10,7 @@
 #include "../App/TsfSharedState.h"
 #include <windows.h>
 #include <objbase.h>
+#include <olectl.h>
 #include <msctf.h>
 #include <textstor.h>
 #include <inputscope.h>
