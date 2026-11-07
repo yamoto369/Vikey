@@ -1,7 +1,8 @@
 // End-to-end TSF typing test. It drives the real TSF stack in-process, with no window or
 // focus involved:
 //   1. TsfController registers the TIP DLL and activates the Vikey profile (as the tray app does);
-//   2. a document with a minimal ITextStoreACP is created and focused, standing in for an app;
+//   2. a foreground window is created and a document with a minimal ITextStoreACP is associated with
+//      and focused in it, standing in for an app;
 //   3. keys go through ITfKeystrokeMgr::TestKeyDown/KeyDown exactly like a TSF-aware host does;
 //      a key the TIP does not claim is "typed" by this host, as an application would;
 //   4. the text left in the store is compared with the expected Vietnamese.
@@ -48,6 +49,52 @@ static void pump(int milliseconds) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
         Sleep(5);
     } while (GetTickCount64() < end);
+}
+
+static HWND g_window = nullptr;
+static HWND g_edit = nullptr;
+static LRESULT CALLBACK testWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_SETFOCUS && g_edit) { SetFocus(g_edit); return 0; }
+    return DefWindowProcW(h, m, w, l);
+}
+// A visible top-level window with an EDIT control, brought to the foreground the way livetest does it.
+static bool createForegroundWindow() {
+    HINSTANCE inst = GetModuleHandleW(nullptr);
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = testWndProc;
+    wc.hInstance = inst;
+    wc.lpszClassName = L"VikeyTsfTypingTest";
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    RegisterClassW(&wc);
+    g_window = CreateWindowExW(WS_EX_TOPMOST, L"VikeyTsfTypingTest", L"Vikey TSF typing test",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 600, 300, nullptr, nullptr, inst, nullptr);
+    if (!g_window) return false;
+    g_edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL,
+        10, 10, 560, 240, g_window, nullptr, inst, nullptr);
+    for (int i = 0; i < 10 && GetForegroundWindow() != g_window; ++i) {
+        const DWORD foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+        const DWORD me = GetCurrentThreadId();
+        if (foregroundThread && foregroundThread != me) AttachThreadInput(foregroundThread, me, TRUE);
+        SetForegroundWindow(g_window);
+        BringWindowToTop(g_window);
+        SetActiveWindow(g_window);
+        SetFocus(g_edit);
+        if (foregroundThread && foregroundThread != me) AttachThreadInput(foregroundThread, me, FALSE);
+        pump(200);
+    }
+    const bool front = GetForegroundWindow() == g_window;
+    std::printf("test window: foreground=%s focus=%s\n", front ? "yes" : "NO",
+        GetFocus() == g_edit ? "edit" : "elsewhere");
+    return front;
+}
+static void sendKey(WORD vk) {
+    INPUT in[2] = {};
+    in[0].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = vk;
+    in[1] = in[0];
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, in, sizeof(INPUT));
+    pump(30);
 }
 
 // GUID_PROP_INPUTSCOPE, kept local like the TIP does.
@@ -313,6 +360,8 @@ static bool runScenario(ITfThreadMgr* threadMgr, TfClientId client, const char* 
     hr = document->CreateContext(client, 0, static_cast<IUnknown*>(static_cast<ITextStoreACP*>(store)), &context, &cookie);
     if (FAILED(hr) || !context) { std::printf("FAIL %s: CreateContext hr=0x%08lX\n", name, static_cast<unsigned long>(hr)); document->Release(); ++g_failures; return false; }
     hr = document->Push(context);
+    ITfDocumentMgr* previousDocument = nullptr;
+    if (SUCCEEDED(hr) && g_window) hr = threadMgr->AssociateFocus(g_window, document, &previousDocument);
     if (SUCCEEDED(hr)) hr = threadMgr->SetFocus(document);
     if (FAILED(hr)) { std::printf("FAIL %s: Push/SetFocus hr=0x%08lX\n", name, static_cast<unsigned long>(hr)); context->Release(); document->Release(); ++g_failures; return false; }
     pump(300);
@@ -341,10 +390,36 @@ static bool runScenario(ITfThreadMgr* threadMgr, TfClientId client, const char* 
     check((label + (expectClaims ? ": TIP claimed Vietnamese edits" : ": TIP claimed nothing")).c_str(), claimsOk);
 
     keys->Release();
-    threadMgr->SetFocus(nullptr);
+    if (g_window) {
+        ITfDocumentMgr* ours = nullptr;
+        threadMgr->AssociateFocus(g_window, previousDocument, &ours);
+        if (ours) ours->Release();
+    }
+    if (previousDocument) previousDocument->Release();
     context->Release();
     document->Release();
     return textOk && noDrops && claimsOk;
+}
+
+// The path a user takes: real key events delivered by the system to a Win32 EDIT control.
+static void runEditScenario(const char* name, const std::wstring& typed, const std::wstring& expected) {
+    if (!g_window || !g_edit) { std::printf("FAIL %s: no test window\n", name); ++g_failures; return; }
+    SetWindowTextW(g_edit, L"");
+    SetFocus(g_edit);
+    SendMessageW(g_edit, EM_SETSEL, 0, 0);
+    pump(200);
+    for (wchar_t c : typed) {
+        if (c == L'\b') sendKey(VK_BACK);
+        else if (c == L' ') sendKey(VK_SPACE);
+        else sendKey(static_cast<WORD>(towupper(c)));
+    }
+    pump(300);
+    const int length = GetWindowTextLengthW(g_edit);
+    std::wstring got(static_cast<size_t>(length), L'\0');
+    if (length > 0) GetWindowTextW(g_edit, &got[0], length + 1);
+    std::printf("%s: typed=\"%s\" result=\"%s\" (%s) foreground=%s\n", name, utf8(typed).c_str(),
+        utf8(got).c_str(), escaped(got).c_str(), GetForegroundWindow() == g_window ? "yes" : "NO");
+    check((std::string(name) + ": text is \"" + utf8(expected) + "\"").c_str(), got == expected);
 }
 
 static bool cleanupRegistration() {
@@ -399,6 +474,9 @@ int wmain() {
         return 1;
     }
 
+    const bool foreground = createForegroundWindow();
+    check("test window is the foreground window", foreground);
+
     {   // An ordinary text field: no input scope declared.
         auto* store = new MockTextStore(false);
         runScenario(threadMgr, client, "plain text field", store, L"vieetj nams ddi", L"việt nám đi", true);
@@ -415,6 +493,9 @@ int wmain() {
         store->Release();
     }
 
+    runEditScenario("win32 EDIT control through SendInput", L"vieetj nams ddi", L"vi\u1ec7t n\u00e1m \u0111i");
+
+    if (g_window) DestroyWindow(g_window);
     threadMgr->Deactivate();
     threadMgr->Release();
     vikey::tsf::shutdown();
