@@ -1,0 +1,6 @@
+LIBRARY "VikeyTsf"
+EXPORTS
+    DllGetClassObject
+    DllCanUnloadNow
+    DllRegisterServer
+    DllUnregisterServer

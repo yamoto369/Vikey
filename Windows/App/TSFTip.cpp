@@ -1,5 +1,6 @@
 #include "TSFTip.h"
 #include <atomic>
+#include <cwchar>
 #include <new>
 
 const CLSID CLSID_VikeyTextService =
@@ -149,7 +150,7 @@ static HRESULT registerComClass() {
     wchar_t clsid[64] = {};
     if (StringFromGUID2(CLSID_VikeyTextService, clsid, 64) == 0) return E_FAIL;
     wchar_t keyPath[128] = {};
-    if (swprintf_s(keyPath, L"CLSID\\%s\\InprocServer32", clsid) < 0) return E_FAIL;
+    if (swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s\\InprocServer32", clsid) < 0) return E_FAIL;
     HKEY key = nullptr;
     LONG error = RegCreateKeyExW(HKEY_CLASSES_ROOT, keyPath, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
     if (error != ERROR_SUCCESS) return HRESULT_FROM_WIN32(error);
@@ -177,7 +178,8 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
             if (!description) hr = E_OUTOFMEMORY;
             else {
                 hr = profiles->AddLanguageProfile(CLSID_VikeyTextService, 0x042A,
-                    GUID_VikeyProfile, description, nullptr, 0, nullptr);
+                    GUID_VikeyProfile, description, static_cast<ULONG>(wcslen(description)),
+                    nullptr, 0, 0);
                 SysFreeString(description);
             }
         }
@@ -197,7 +199,7 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllRegisterServer() {
         wchar_t clsid[64] = {};
         StringFromGUID2(CLSID_VikeyTextService, clsid, 64);
         wchar_t keyPath[128] = {};
-        swprintf_s(keyPath, L"CLSID\\%s", clsid);
+        swprintf_s(keyPath, _countof(keyPath), L"CLSID\\%s", clsid);
         RegDeleteTreeW(HKEY_CLASSES_ROOT, keyPath);
     }
     return hr;
@@ -210,7 +212,7 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
         IID_ITfInputProcessorProfiles, reinterpret_cast<void**>(&profiles));
     if (SUCCEEDED(hr)) {
         hr = profiles->Unregister(CLSID_VikeyTextService);
-        if (FAILED(hr) && hr != CONNECT_E_NOCONNECTION) result = hr;
+        if (FAILED(hr)) result = hr;
         profiles->Release();
     } else result = hr;
     ITfCategoryMgr* categories = nullptr;
@@ -237,7 +239,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
     return TRUE;
 }
 
-extern "C" __declspec(dllexport) HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void** object) {
+STDAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void** object) {
     if (!IsEqualCLSID(clsid, CLSID_VikeyTextService)) return CLASS_E_CLASSNOTAVAILABLE;
     auto* factory = new (std::nothrow) VikeyClassFactory();
     if (!factory) return E_OUTOFMEMORY;
@@ -246,6 +248,6 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllGetClassObject(REFCLSID clsid
     return hr;
 }
 
-extern "C" __declspec(dllexport) HRESULT WINAPI DllCanUnloadNow() {
+STDAPI DllCanUnloadNow() {
     return g_objects.load() == 0 && g_locks.load() == 0 ? S_OK : S_FALSE;
 }

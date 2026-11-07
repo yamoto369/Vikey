@@ -46,3 +46,6 @@ target_include_directories(vikey_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(vikey_tsf PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(vikey_tsf PRIVATE ole32 oleaut32 advapi32 msctf uuid)
 set_target_properties(vikey_tsf PROPERTIES PREFIX "" OUTPUT_NAME "VikeyTsf")
+
+# Export the standard COM DLL entry points with their undecorated names.
+target_link_options(vikey_tsf PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/TSFTip.def")
