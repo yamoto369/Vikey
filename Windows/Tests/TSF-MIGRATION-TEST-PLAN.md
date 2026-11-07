@@ -69,7 +69,7 @@ The TSF work must add deterministic tests for the following seams. Prefer pure f
 | Special input | dead keys, AltGr, Unicode input, surrogate pairs, IME-owned keys |
 | Boundaries | word break, cursor movement, selection change, focus/context change |
 
-### B. TSF COM lifecycle
+### A2. TSF context eligibility policy (implemented as pure tests)\n\n- Vikey disabled: pass keys through.\n- Unknown, non-text, read-only, password and secure contexts: pass keys through.\n- Another IME active: do not intercept.\n- Only an enabled editable text context with no competing IME may be handled.\n\n### B. TSF COM lifecycle
 
 - COM class factory: supported IID, unsupported IID, reference counting and aggregation policy.
 - TIP activation: valid client ID, repeated activation, activation failure and partial initialization cleanup.
