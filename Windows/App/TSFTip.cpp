@@ -92,7 +92,9 @@ static bool isSafeInputContext(TfEditCookie cookie, ITfRange* range) {
     VariantInit(&value);
     hr = property->GetValue(cookie, range, &value);
     property->Release();
-    if (SUCCEEDED(hr) && (value.vt == VT_EMPTY || value.vt == VT_NULL)) {
+    // TSF reports "this range has no value for the property" either as success or as
+    // E_FAIL, depending on the text store, always with an empty VARIANT.
+    if ((value.vt == VT_EMPTY || value.vt == VT_NULL) && (hr == S_OK || hr == S_FALSE || hr == E_FAIL)) {
         // Most applications never declare an input scope, which means an ordinary
         // text field. Password and other sensitive fields declare an explicit
         // scope (checked below) and are also flagged by the controller's UI
