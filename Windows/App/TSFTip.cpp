@@ -227,7 +227,7 @@ extern "C" __declspec(dllexport) HRESULT WINAPI DllUnregisterServer() {
     // Unregistering a service while TSF still owns an activated instance can
     // fail even after the application's thread manager has been deactivated.
     ITfInputProcessorProfileMgr* profileMgr = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfileMgr, nullptr,
+    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profileMgr));
     if (SUCCEEDED(hr)) {
         hr = profileMgr->ReleaseInputProcessor(CLSID_VikeyTextService, 0);
