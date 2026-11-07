@@ -109,8 +109,7 @@ public:
         // expands the edit range to the left before inserting the engine's result.
         if (SUCCEEDED(hr) && empty && edit_.deleteCount > 0) {
             LONG shifted = 0;
-            BOOL halted = FALSE;
-            hr = selection.range->ShiftStart(cookie, -edit_.deleteCount, &shifted, &halted);
+            hr = selection.range->ShiftStart(cookie, -edit_.deleteCount, &shifted, nullptr);
             if (SUCCEEDED(hr) && shifted != -edit_.deleteCount) hr = TF_E_INVALIDPOS;
         }
         if (SUCCEEDED(hr)) {
