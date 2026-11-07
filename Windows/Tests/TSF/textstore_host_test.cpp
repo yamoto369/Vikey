@@ -314,6 +314,8 @@ int wmain() {
 
     ITfThreadMgr* threadManager = nullptr;
     TfClientId clientId = TF_CLIENTID_NULL;
+    TfClientId tipClientId = TF_CLIENTID_NULL;
+    ITfClientId* clientIdManager = nullptr;
     ITfDocumentMgr* documentManager = nullptr;
     ITfContext* context = nullptr;
     ITfKeystrokeMgr* keystrokes = nullptr;
@@ -330,6 +332,12 @@ int wmain() {
     if (FAILED(hr)) { writeLog("FAIL: create TSF thread manager"); goto Cleanup; }
     hr = threadManager->Activate(&clientId);
     if (FAILED(hr)) { writeLog("FAIL: activate TSF thread manager"); goto Cleanup; }
+    hr = threadManager->QueryInterface(IID_PPV_ARGS(&clientIdManager));
+    if (FAILED(hr)) { writeLog("FAIL: query ITfClientId"); goto Cleanup; }
+    hr = clientIdManager->GetClientId(CLSID_VikeyTextService, &tipClientId);
+    clientIdManager->Release();
+    clientIdManager = nullptr;
+    if (FAILED(hr)) { writeLog("FAIL: resolve TIP client ID"); goto Cleanup; }
     hr = threadManager->CreateDocumentMgr(&documentManager);
     if (FAILED(hr)) { writeLog("FAIL: create document manager"); goto Cleanup; }
     TfEditCookie textStoreCookie = TF_INVALID_EDIT_COOKIE;
@@ -345,7 +353,7 @@ int wmain() {
     hr = CoCreateInstance(CLSID_VikeyTextService, nullptr, CLSCTX_INPROC_SERVER,
                           IID_PPV_ARGS(&textService));
     if (FAILED(hr)) { writeLog("FAIL: CoCreateInstance(Vikey TIP)"); goto Cleanup; }
-    hr = textService->ActivateEx(threadManager, clientId, 0);
+    hr = textService->ActivateEx(threadManager, tipClientId, 0);
     if (FAILED(hr)) { writeLog("FAIL: TIP ActivateEx on test thread manager"); goto Cleanup; }
 
     hr = threadManager->QueryInterface(IID_PPV_ARGS(&keystrokes));
@@ -389,6 +397,7 @@ int wmain() {
     hr = S_OK;
 
 Cleanup:
+    if (clientIdManager) clientIdManager->Release();
     if (keystrokes) keystrokes->Release();
     if (textService) {
         textService->Deactivate();

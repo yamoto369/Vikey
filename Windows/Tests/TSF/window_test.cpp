@@ -67,15 +67,21 @@ int wmain() {
 
     ITfThreadMgr* threadManager = nullptr;
     TfClientId clientId = TF_CLIENTID_NULL;
+    TfClientId tipClientId = TF_CLIENTID_NULL;
+    ITfClientId* clientIdManager = nullptr;
     ITfTextInputProcessorEx* textService = nullptr;
     HRESULT tsfHr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&threadManager));
     if (SUCCEEDED(tsfHr)) tsfHr = threadManager->Activate(&clientId);
+    if (SUCCEEDED(tsfHr)) tsfHr = threadManager->QueryInterface(IID_PPV_ARGS(&clientIdManager));
+    if (SUCCEEDED(tsfHr)) tsfHr = clientIdManager->GetClientId(CLSID_VikeyTextService, &tipClientId);
+    if (clientIdManager) { clientIdManager->Release(); clientIdManager = nullptr; }
     if (SUCCEEDED(tsfHr)) tsfHr = CoCreateInstance(CLSID_VikeyTextService, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&textService));
-    if (SUCCEEDED(tsfHr)) tsfHr = textService->ActivateEx(threadManager, clientId, 0);
+    if (SUCCEEDED(tsfHr)) tsfHr = textService->ActivateEx(threadManager, tipClientId, 0);
     if (FAILED(tsfHr)) {
         logLine("FAIL: explicit TIP activation on window test thread");
+        if (clientIdManager) clientIdManager->Release();
         if (textService) textService->Release();
         if (threadManager) { threadManager->Deactivate(); threadManager->Release(); }
         if (unregisterFn) unregisterFn();
