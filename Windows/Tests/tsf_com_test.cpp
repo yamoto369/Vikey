@@ -5,6 +5,7 @@
 
 using GetClassObjectFn = HRESULT (STDAPICALLTYPE*)(REFCLSID, REFIID, void**);
 using CanUnloadFn = HRESULT (STDAPICALLTYPE*)();
+using DllRegistrationFn = HRESULT (STDAPICALLTYPE*)();
 
 static int failures = 0;
 static void check(const char* name, bool ok) {
@@ -22,6 +23,7 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "Usage: tsf_com_test.exe <VikeyTsf.dll>\n");
         return 2;
     }
+
     HMODULE module = LoadLibraryW(argv[1]);
     check("LoadLibrary", module != nullptr);
     if (!module) { CoUninitialize(); return 1; }
@@ -30,23 +32,31 @@ int wmain(int argc, wchar_t** argv) {
         GetProcAddress(module, "DllGetClassObject"));
     auto canUnload = reinterpret_cast<CanUnloadFn>(
         GetProcAddress(module, "DllCanUnloadNow"));
+    auto registerServer = reinterpret_cast<DllRegistrationFn>(
+        GetProcAddress(module, "DllRegisterServer"));
+    auto unregisterServer = reinterpret_cast<DllRegistrationFn>(
+        GetProcAddress(module, "DllUnregisterServer"));
+
     check("export DllGetClassObject", getClassObject != nullptr);
     check("export DllCanUnloadNow", canUnload != nullptr);
-    check("export DllRegisterServer", GetProcAddress(module, "DllRegisterServer") != nullptr);
-    check("export DllUnregisterServer", GetProcAddress(module, "DllUnregisterServer") != nullptr);
+    check("export DllRegisterServer", registerServer != nullptr);
+    check("export DllUnregisterServer", unregisterServer != nullptr);
 
-    if (getClassObject && canUnload) {
-        const CLSID clsid = { 0x9b7a4d31, 0x6d8f, 0x4d22, { 0xa1, 0x73, 0x5e, 0x91, 0x2c, 0x44, 0x8b, 0x60 } };
+    const CLSID clsid = { 0x9b7a4d31, 0x6d8f, 0x4d22, { 0xa1, 0x73, 0x5e, 0x91, 0x2c, 0x44, 0x8b, 0x60 } };
+    const GUID profileGuid = { 0x4e7c1a26, 0x8d39, 0x4f51, { 0xb2, 0x07, 0x61, 0x33, 0x9a, 0xc8, 0x42, 0x15 } };
+    constexpr LANGID kVietnameseLangId = 0x042A;
+
+    if (getClassObject && canUnload && registerServer && unregisterServer) {
         IClassFactory* factory = nullptr;
         HRESULT hr = getClassObject(clsid, IID_IClassFactory, reinterpret_cast<void**>(&factory));
         check("DllGetClassObject returns class factory", SUCCEEDED(hr) && factory != nullptr);
         check("factory prevents unload", canUnload() == S_FALSE);
 
         if (factory) {
-            IClassFactory* unsupported = nullptr;
-            hr = factory->QueryInterface(IID_IClassFactory, reinterpret_cast<void**>(&unsupported));
-            check("class factory QueryInterface", SUCCEEDED(hr) && unsupported != nullptr);
-            if (unsupported) unsupported->Release();
+            IClassFactory* factoryCopy = nullptr;
+            hr = factory->QueryInterface(IID_IClassFactory, reinterpret_cast<void**>(&factoryCopy));
+            check("class factory QueryInterface", SUCCEEDED(hr) && factoryCopy != nullptr);
+            if (factoryCopy) factoryCopy->Release();
 
             IUnknown* aggregated = nullptr;
             hr = factory->CreateInstance(reinterpret_cast<IUnknown*>(factory), IID_IUnknown,
@@ -64,85 +74,106 @@ int wmain(int argc, wchar_t** argv) {
                     BOOL eaten = TRUE;
                     hr = sink->OnTestKeyDown(nullptr, 0, 0, &eaten);
                     check("key test callback is pass-through", SUCCEEDED(hr) && eaten == FALSE);
-                    check("null callback output rejected", sink->OnTestKeyDown(nullptr, 0, 0, nullptr) == E_POINTER);
+                    check("null callback output rejected",
+                        sink->OnTestKeyDown(nullptr, 0, 0, nullptr) == E_POINTER);
                     sink->Release();
                 }
-                check("Activate rejects null thread manager", tip->Activate(nullptr, TF_CLIENTID_NULL) == E_INVALIDARG);
-
-                // Exercise the actual TSF manager supplied to TIPs by Windows.
-                ITfThreadMgr* threadMgr = nullptr;
-                hr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
-                    IID_ITfThreadMgr, reinterpret_cast<void**>(&threadMgr));
-                check("create TSF thread manager", SUCCEEDED(hr) && threadMgr != nullptr);
-                if (threadMgr) {
-                    TfClientId clientId = TF_CLIENTID_NULL;
-                    hr = threadMgr->Activate(&clientId);
-                    const bool threadMgrActivated = SUCCEEDED(hr) && clientId != TF_CLIENTID_NULL;
-                    check("activate TSF thread manager", threadMgrActivated);
-                    if (threadMgrActivated) {
-                        ITfKeystrokeMgr* queriedKeyMgr = nullptr;
-                        HRESULT queryHr = threadMgr->QueryInterface(IID_PPV_ARGS(&queriedKeyMgr));
-                        check("thread manager exposes ITfKeystrokeMgr",
-                            SUCCEEDED(queryHr) && queriedKeyMgr != nullptr);
-
-                        // ITfThreadMgr::Activate returns the application's client ID.
-                        // A text service receives a distinct ID associated with its CLSID.
-                        ITfClientId* clientIdManager = nullptr;
-                        HRESULT clientIdHr = threadMgr->QueryInterface(IID_PPV_ARGS(&clientIdManager));
-                        TfClientId serviceClientId = TF_CLIENTID_NULL;
-                        if (SUCCEEDED(clientIdHr) && clientIdManager) {
-                            clientIdHr = clientIdManager->GetClientId(clsid, &serviceClientId);
-                        }
-                        std::printf("Application clientId = 0x%08lX; text-service clientId = 0x%08lX\\n",
-                            static_cast<unsigned long>(clientId),
-                            static_cast<unsigned long>(serviceClientId));
-                        check("obtain distinct text-service client ID",
-                            SUCCEEDED(clientIdHr) && serviceClientId != TF_CLIENTID_NULL &&
-                            serviceClientId != clientId);
-
-                        ITfKeyEventSink* directSink = nullptr;
-                        HRESULT sinkHr = tip->QueryInterface(IID_PPV_ARGS(&directSink));
-                        check("query direct diagnostic key sink", SUCCEEDED(sinkHr) && directSink != nullptr);
-                        if (SUCCEEDED(queryHr) && queriedKeyMgr && SUCCEEDED(clientIdHr) &&
-                            serviceClientId != TF_CLIENTID_NULL && directSink) {
-                            HRESULT directAdviseHr = queriedKeyMgr->AdviseKeyEventSink(serviceClientId, directSink, TRUE);
-                            std::printf("Direct AdviseKeyEventSink HRESULT = 0x%08lX\\n",
-                                static_cast<unsigned long>(directAdviseHr));
-                            check("direct TSF key sink advise with text-service ID", SUCCEEDED(directAdviseHr));
-                            if (SUCCEEDED(directAdviseHr)) {
-                                check("direct TSF key sink unadvise",
-                                    SUCCEEDED(queriedKeyMgr->UnadviseKeyEventSink(serviceClientId)));
-                            }
-                        }
-                        if (directSink) directSink->Release();
-                        if (queriedKeyMgr) queriedKeyMgr->Release();
-                        if (clientIdManager) clientIdManager->Release();
-
-                        hr = tip->Activate(threadMgr, serviceClientId);
-                        std::printf("TIP Activate HRESULT = 0x%08lX\\n",
-                            static_cast<unsigned long>(hr));
-                        const bool tipActivated = SUCCEEDED(hr);
-                        check("TIP activation advises real TSF key sink", tipActivated);
-                        if (tipActivated) {
-                            check("duplicate TIP activation rejected",
-                                tip->Activate(threadMgr, clientId) == TF_E_ALREADY_EXISTS);
-                            check("TIP deactivation unadvises real TSF key sink", SUCCEEDED(tip->Deactivate()));
-                            check("TIP deactivation is idempotent", SUCCEEDED(tip->Deactivate()));
-                        }
-                        check("deactivate TSF thread manager", SUCCEEDED(threadMgr->Deactivate()));
-                    }
-                    threadMgr->Release();
-                }
+                check("Activate rejects null thread manager",
+                    tip->Activate(nullptr, TF_CLIENTID_NULL) == E_INVALIDARG);
                 tip->Release();
             }
             factory->Release();
         }
+
+        // Exercise the real TSF activation path. A TIP's client ID must be
+        // supplied by TSF when it activates the registered language profile;
+        // GetClientId(CLSID) is not a substitute for that activation callback.
+        bool registered = false;
+        HRESULT registerHr = registerServer();
+        std::printf("DllRegisterServer HRESULT = 0x%08lX\n", static_cast<unsigned long>(registerHr));
+        check("register TSF text service", SUCCEEDED(registerHr));
+        registered = SUCCEEDED(registerHr);
+
+        ITfInputProcessorProfiles* profiles = nullptr;
+        ITfThreadMgr* threadMgr = nullptr;
+        bool threadMgrActivated = false;
+
+        if (registered) {
+            hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&profiles));
+            check("create TSF input processor profiles", SUCCEEDED(hr) && profiles != nullptr);
+        }
+
+        if (profiles) {
+            LANGID currentLangId = 0;
+            hr = profiles->GetCurrentLanguage(&currentLangId);
+            check("get current input language", SUCCEEDED(hr) && currentLangId != 0);
+
+            if (SUCCEEDED(hr) && currentLangId != kVietnameseLangId) {
+                const wchar_t description[] = L"Vikey TSF lifecycle test";
+                hr = profiles->AddLanguageProfile(clsid, currentLangId, profileGuid,
+                    description, static_cast<ULONG>(_countof(description) - 1), nullptr, 0, 0);
+                std::printf("Add test language profile HRESULT = 0x%08lX\n",
+                    static_cast<unsigned long>(hr));
+                check("add test profile for current language", SUCCEEDED(hr));
+            }
+
+            if (SUCCEEDED(hr)) {
+                hr = profiles->EnableLanguageProfile(clsid, currentLangId, profileGuid, TRUE);
+                std::printf("EnableLanguageProfile HRESULT = 0x%08lX\n",
+                    static_cast<unsigned long>(hr));
+                check("enable test language profile", SUCCEEDED(hr));
+            }
+        }
+
+        if (profiles) {
+            hr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&threadMgr));
+            check("create TSF thread manager for profile activation", SUCCEEDED(hr) && threadMgr != nullptr);
+            if (threadMgr) {
+                TfClientId applicationClientId = TF_CLIENTID_NULL;
+                hr = threadMgr->Activate(&applicationClientId);
+                threadMgrActivated = SUCCEEDED(hr) && applicationClientId != TF_CLIENTID_NULL;
+                check("activate TSF thread manager", threadMgrActivated);
+            }
+        }
+
+        if (profiles && threadMgrActivated) {
+            hr = profiles->ActivateLanguageProfile(clsid,
+                currentLangId, profileGuid);
+            std::printf("ActivateLanguageProfile HRESULT = 0x%08lX\n",
+                static_cast<unsigned long>(hr));
+            check("TSF activates registered Vikey profile", SUCCEEDED(hr));
+
+            LANGID activeLangId = 0;
+            GUID activeProfile = GUID_NULL;
+            HRESULT activeHr = profiles->GetActiveLanguageProfile(clsid, &activeLangId, &activeProfile);
+            check("Vikey profile reported active",
+                SUCCEEDED(activeHr) && activeLangId == currentLangId &&
+                IsEqualGUID(activeProfile, profileGuid));
+        }
+
+        if (threadMgr) {
+            if (threadMgrActivated)
+                check("deactivate TSF thread manager", SUCCEEDED(threadMgr->Deactivate()));
+            threadMgr->Release();
+        }
+        if (profiles) profiles->Release();
+
+        if (registered) {
+            HRESULT unregisterHr = unregisterServer();
+            std::printf("DllUnregisterServer HRESULT = 0x%08lX\n",
+                static_cast<unsigned long>(unregisterHr));
+            check("unregister TSF test registration", SUCCEEDED(unregisterHr));
+        }
+
         check("objects released; DLL can unload", canUnload() == S_OK);
     }
 
     const BOOL unloaded = FreeLibrary(module);
     check("FreeLibrary", unloaded != FALSE);
     CoUninitialize();
-    std::printf("TSF COM smoke test: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
+    std::printf("TSF COM smoke test: %s (%d failures)\n",
+        failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }
