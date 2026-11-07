@@ -166,16 +166,16 @@ bool ensureRegistered(const std::wstring& dllPath) {
 }
 
 bool isActiveProfile(LANGID language) {
-    ITfInputProcessorProfileMgr* manager = nullptr;
+    ITfInputProcessorProfiles* profiles = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&manager));
-    if (FAILED(hr) || !manager) return false;
-    TF_INPUTPROCESSORPROFILE active{};
-    hr = manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active);
-    manager->Release();
-    return SUCCEEDED(hr) && active.langid == language &&
-        IsEqualGUID(active.clsid, kVikeyClsid) &&
-        IsEqualGUID(active.guidProfile, kVikeyProfile);
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profiles));
+    if (FAILED(hr) || !profiles) return false;
+    LANGID activeLanguage = 0;
+    GUID activeProfile = GUID_NULL;
+    hr = profiles->GetActiveLanguageProfile(kVikeyClsid, &activeLanguage, &activeProfile);
+    profiles->Release();
+    return SUCCEEDED(hr) && activeLanguage == language &&
+        IsEqualGUID(activeProfile, kVikeyProfile);
 }
 
 bool deactivateActiveProfile() {
@@ -185,7 +185,7 @@ bool deactivateActiveProfile() {
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&manager));
     if (FAILED(hr) || !manager) { g_activeLanguage = 0; return false; }
     hr = manager->DeactivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, g_activeLanguage,
-        kVikeyClsid, kVikeyProfile, nullptr, TF_IPPMF_FORSESSION);
+        kVikeyClsid, kVikeyProfile, nullptr, TF_IPPMF_FORSESSION | TF_IPPMF_DISABLEPROFILE);
     manager->Release();
     g_activeLanguage = 0;
     // E_FAIL can mean that Windows already deactivated the profile after a
@@ -247,33 +247,16 @@ bool sync(bool vietnameseEnabled) {
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&profiles));
     if (FAILED(hr) || !profiles) return false;
     const bool ready = ensureLanguageProfile(profiles, language);
-    profiles->Release();
-    if (!ready) { std::fprintf(stderr, "[TsfController] language profile setup failed\\n"); return false; }
-
-    ITfInputProcessorProfileMgr* manager = nullptr;
-    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&manager));
-    if (FAILED(hr) || !manager) { std::fprintf(stderr, "[TsfController] profile manager creation failed: 0x%08lX\\n", static_cast<unsigned long>(hr)); return false; }
-    hr = manager->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, language,
-        kVikeyClsid, kVikeyProfile, nullptr,
-        TF_IPPMF_FORSESSION | TF_IPPMF_ENABLEPROFILE);
-    manager->Release();
-    std::fprintf(stderr, "[TsfController] ActivateProfile: 0x%08lX\\n", static_cast<unsigned long>(hr));
-    if (FAILED(hr)) return false;
-
-    ITfInputProcessorProfileMgr* verify = nullptr;
-    hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&verify));
-    if (FAILED(hr) || !verify) { std::fprintf(stderr, "[TsfController] verify manager creation failed: 0x%08lX\\n", static_cast<unsigned long>(hr)); return false; }
-    TF_INPUTPROCESSORPROFILE active{};
-    hr = verify->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active);
-    verify->Release();
-    std::fprintf(stderr, "[TsfController] GetActiveProfile: hr=0x%08lX lang=%04X clsidMatch=%d profileMatch=%d\\n",
-        static_cast<unsigned long>(hr), active.langid, IsEqualGUID(active.clsid, kVikeyClsid),
-        IsEqualGUID(active.guidProfile, kVikeyProfile));
-    if (FAILED(hr) || !IsEqualGUID(active.clsid, kVikeyClsid) ||
-        !IsEqualGUID(active.guidProfile, kVikeyProfile) || active.langid != language)
+    if (!ready) {
+        profiles->Release();
+        std::fprintf(stderr, "[TsfController] language profile setup failed\\n");
         return false;
+    }
+
+    hr = profiles->ActivateLanguageProfile(kVikeyClsid, language, kVikeyProfile);
+    profiles->Release();
+    std::fprintf(stderr, "[TsfController] ActivateLanguageProfile: 0x%08lX\\n", static_cast<unsigned long>(hr));
+    if (FAILED(hr) || !isActiveProfile(language)) return false;
 
     g_activeLanguage = language;
     return true;
