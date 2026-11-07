@@ -19,7 +19,7 @@ int wmain(int argc, wchar_t** argv) {
 
     if (argc != 2) {
         CoUninitialize();
-        std::fprintf(stderr, "Usage: tsf_com_test.exe <VikeyTsf.dll>\\n");
+        std::fprintf(stderr, "Usage: tsf_com_test.exe <VikeyTsf.dll>\n");
         return 2;
     }
     HMODULE module = LoadLibraryW(argv[1]);
@@ -77,16 +77,17 @@ int wmain(int argc, wchar_t** argv) {
                 if (threadMgr) {
                     TfClientId clientId = TF_CLIENTID_NULL;
                     hr = threadMgr->Activate(&clientId);
-                    check("activate TSF thread manager", SUCCEEDED(hr) && clientId != TF_CLIENTID_NULL);
-                    if (SUCCEEDED(hr)) {
+                    const bool threadMgrActivated = SUCCEEDED(hr) && clientId != TF_CLIENTID_NULL;
+                    check("activate TSF thread manager", threadMgrActivated);
+                    if (threadMgrActivated) {
                         hr = tip->Activate(threadMgr, clientId);
                         check("TIP activation advises real TSF key sink", SUCCEEDED(hr));
                         check("duplicate TIP activation rejected",
                             tip->Activate(threadMgr, clientId) == TF_E_ALREADY_EXISTS);
                         check("TIP deactivation unadvises real TSF key sink", SUCCEEDED(tip->Deactivate()));
                         check("TIP deactivation is idempotent", SUCCEEDED(tip->Deactivate()));
+                        check("deactivate TSF thread manager", SUCCEEDED(threadMgr->Deactivate()));
                     }
-                    check("deactivate TSF thread manager", SUCCEEDED(threadMgr->Deactivate()));
                     threadMgr->Release();
                 }
                 tip->Release();
