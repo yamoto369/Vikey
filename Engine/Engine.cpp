@@ -1287,9 +1287,9 @@ void vSetCheckSpelling() {
 #define AS_EN_FLOOR 99      //no floor: a tie converts when the Vietnamese reading is AS_PREFER points more common (D22; was 0)
 #endif
 
-thread_local int vAutoSwitchRequest = -1;
-thread_local Uint32 vAutoSwitchUndoData[MAX_BUFF];
-thread_local int vAutoSwitchUndoCount = 0;
+int vAutoSwitchRequest = -1;
+Uint32 vAutoSwitchUndoData[MAX_BUFF];
+int vAutoSwitchUndoCount = 0;
 
 static char _asLetter[256];
 static thread_local bool _asLetterReady = false;
@@ -1422,7 +1422,7 @@ static inline bool asEnabled() {
 }
 
 /** Vietnamese mode: a word was ended by a single space and stays Vietnamese. Keep it for look-back. */
-thread_local int vAutoSwitchLastSide = -1;
+int vAutoSwitchLastSide = -1;
 
 // ---- Word pairs for ties (D30, experiment) ---------------------------------------------------------------
 // For a word that is a word both ways (bus/bú, been/bên), how often each reading follows the previous word
@@ -1799,9 +1799,9 @@ static bool asHyphenRestore() {
 
 /** Puts the raw keys back (like "restore if wrong spelling") and asks for English.
  *  Ambiguous words just before it (look-back) are put back to their keys too. */
-thread_local bool vAutoSwitchPrevRestored = false;        //previous[0] of the next English-word check is a word auto switch put back to English
-thread_local Uint32 vAutoSwitchRestoredKeys[MAX_BUFF];   //the keys of the word just put back to English (D35: a later word can look back on it)
-thread_local int vAutoSwitchRestoredCount = 0;
+bool vAutoSwitchPrevRestored = false;        //previous[0] of the next English-word check is a word auto switch put back to English
+Uint32 vAutoSwitchRestoredKeys[MAX_BUFF];   //the keys of the word just put back to English (D35: a later word can look back on it)
+int vAutoSwitchRestoredCount = 0;
 static void asRestoreToEnglish(const int& handleCode) {
     vAutoSwitchRestoredCount = 0;
     if (_stateIndex > 0 && _stateIndex < MAX_BUFF) {

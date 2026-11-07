@@ -1,6 +1,7 @@
 #include "TsfEngineAdapter.h"
 #include "KeyMap.h"
 #include "Engine.h"
+#include "TsfEngineRuntime.h"
 
 namespace vikey { namespace tsf {
 namespace {
@@ -43,7 +44,6 @@ EngineEdit EngineAdapter::processKey(UINT virtualKey, bool shift, bool capsLock,
     if (vLanguage == 0) return result;
     const Uint16 key = engineKey(virtualKey);
     if (key == KEY_EMPTY) return result;
-    vAutoSwitchRequest = -1;
     const Uint8 capsStatus = shift ? 1 : (capsLock ? 2 : 0);
     vKeyHandleEvent(vKeyEvent::Keyboard, vKeyEventState::KeyDown, key,
                     capsStatus, controlOrAltOrWin);
