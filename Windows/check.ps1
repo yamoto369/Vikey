@@ -9,7 +9,7 @@ $env:TMPDIR = $env:TEMP
 Write-Host '== Configure engine test tools =='
 cmake -S "$root/Windows" -B "$root/Windows/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
-cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test
+cmake --build "$root/Windows/build" --config Release --target harness sim rtsim drvlazy bench undo_test touchsim vikey_keymap_test vikey_input_policy_test
 if ($LASTEXITCODE -ne 0) { throw 'Building engine validation tools failed' }
 
 $harness = Join-Path $as 'test/harness.exe'
@@ -26,6 +26,11 @@ Write-Host '== Windows key adapter unit tests =='
 $keymapTest = Join-Path $root 'Windows/build/App/vikey_keymap_test.exe'
 & $keymapTest
 if ($LASTEXITCODE -ne 0) { throw 'Windows key adapter unit tests failed' }
+
+Write-Host '== Windows input policy unit tests =='
+$inputPolicyTest = Join-Path $root 'Windows/build/App/vikey_input_policy_test.exe'
+& $inputPolicyTest
+if ($LASTEXITCODE -ne 0) { throw 'Windows input policy unit tests failed' }
 
 function Invoke-PythonCheck([string]$Script, [string[]]$Arguments = @()) {
     & python $Script @Arguments
