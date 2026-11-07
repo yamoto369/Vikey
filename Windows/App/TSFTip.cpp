@@ -152,6 +152,12 @@ static bool isSafeInputContext(TfEditCookie cookie, ITfRange* range) {
     return safe;
 }
 
+// Keys that type a printable character and end the current word: Space, digits, punctuation.
+static bool isWordBreakCharacter(UINT vk) {
+    return vk == VK_SPACE || (vk >= '0' && vk <= '9') ||
+           (vk >= 0xBA && vk <= 0xC0) || (vk >= 0xDB && vk <= 0xDF);
+}
+
 // The character this key types with the active layout and the current Shift/Caps Lock state.
 static std::wstring typedCharacter(UINT vk) {
     BYTE state[256] = {};
@@ -279,8 +285,8 @@ class VikeyComposeSession final : public ITfEditSession {
 public:
     // text == nullptr ends the composition; otherwise the composition text becomes *text.
     VikeyComposeSession(ITfContext* context, ITfComposition** slot, ITfCompositionSink* sink,
-                        const std::wstring* text)
-        : context_(context), slot_(slot), sink_(sink) {
+                        const std::wstring* text, bool endAfter = false)
+        : context_(context), slot_(slot), sink_(sink), endAfter_(endAfter) {
         if (context_) context_->AddRef();
         if (text) { text_ = *text; end_ = false; }
     }
@@ -352,6 +358,11 @@ public:
             tipNote(18, L"compose: first composition update applied");
         }
         range->Release();
+        if (SUCCEEDED(hr) && endAfter_ && *slot_) {
+            (*slot_)->EndComposition(cookie);
+            (*slot_)->Release();
+            *slot_ = nullptr;
+        }
         return hr;
     }
 private:
@@ -361,6 +372,7 @@ private:
     ITfCompositionSink* sink_ = nullptr;
     std::wstring text_;
     bool end_ = true;
+    bool endAfter_ = false;
     bool done_ = false;
 };
 }
@@ -494,6 +506,7 @@ public:
         }
         std::wstring target = word_;
         bool claim = false;
+        pendingEnd_ = false;
         if (key == VK_BACK) {
             if (composing && !target.empty()) { target.pop_back(); claim = true; }
         } else if (edit.consume) {
@@ -509,6 +522,11 @@ public:
         } else if (isLetter) {
             const std::wstring raw = typedCharacter(static_cast<UINT>(key));
             if (!raw.empty()) { target += raw; claim = true; }
+        } else if (composing && isWordBreakCharacter(static_cast<UINT>(key))) {
+            // The key that ends the word is typed together with it, in one edit, so the application
+            // cannot see the space before the word it follows (IMM-bridged controls do that).
+            const std::wstring raw = typedCharacter(static_cast<UINT>(key));
+            if (!raw.empty()) { target += raw; claim = true; pendingEnd_ = true; }
         }
         if (!claim) {
             endComposition();
@@ -532,7 +550,7 @@ public:
         hasPending_ = false;
         const bool ending = pendingText_.empty();
         auto* session = new (std::nothrow) VikeyComposeSession(context, &composition_,
-            static_cast<ITfCompositionSink*>(this), ending ? nullptr : &pendingText_);
+            static_cast<ITfCompositionSink*>(this), ending ? nullptr : &pendingText_, pendingEnd_);
         if (!session) return E_OUTOFMEMORY;
         if (!composition_ && composeContext_ != context) {
             if (composeContext_) composeContext_->Release();
@@ -543,7 +561,7 @@ public:
         HRESULT hr = context->RequestEditSession(clientId_, session,
             TF_ES_SYNC | TF_ES_READWRITE, &sessionResult);
         if (SUCCEEDED(hr) && SUCCEEDED(sessionResult) && session->done()) {
-            if (ending) dropComposition(); else word_ = pendingText_;
+            if (ending || pendingEnd_) dropComposition(); else word_ = pendingText_;
             *eaten = TRUE;
         } else {
             wchar_t note[180] = {};
@@ -657,6 +675,7 @@ private:
     vikey::tsf::EngineAdapter adapter_;
     int observedLanguage_ = -1;
     bool hasPending_ = false;
+    bool pendingEnd_ = false;
     UINT pendingKey_ = 0;
     std::wstring pendingText_;
     ITfComposition* composition_ = nullptr;
