@@ -3,7 +3,6 @@
 #include <msctf.h>
 #include <objbase.h>
 #include <string>
-#include <cstdio>
 
 namespace {
 const CLSID kVikeyClsid =
@@ -38,10 +37,6 @@ std::wstring modulePath() {
     return result;
 }
 
-LANGID currentThreadLanguage() {
-    HKL layout = GetKeyboardLayout(GetCurrentThreadId());
-    return LOWORD(reinterpret_cast<ULONG_PTR>(layout));
-}
 LANGID foregroundLanguage() {
     HWND foreground = GetForegroundWindow();
     DWORD threadId = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
@@ -252,11 +247,10 @@ bool sync(bool vietnameseEnabled) {
     LANGID language = 0;
     HRESULT hr = g_profiles ? g_profiles->GetCurrentLanguage(&language) : E_UNEXPECTED;
     const LANGID foreground = foregroundLanguage();
-    // ActivateProfile requires the caller's current input language to match.
+    // TSF profile activation requires the caller's current input language to match.
     // If an application has a different per-window keyboard layout, retain
     // the legacy hook for that window rather than changing its layout.
     if (!language || language != foreground || !supportedLanguage(language)) {
-        std::fprintf(stderr, "[TsfController] language mismatch/unsupported: current=%04X foreground=%04X\\n", language, foreground);
         deactivateActiveProfile();
         return false;
     }
@@ -269,12 +263,10 @@ bool sync(bool vietnameseEnabled) {
     if (FAILED(hr) || !g_profiles) return false;
     const bool ready = ensureLanguageProfile(g_profiles, language);
     if (!ready) {
-        std::fprintf(stderr, "[TsfController] language profile setup failed\\n");
         return false;
     }
 
     hr = g_profiles->ActivateLanguageProfile(kVikeyClsid, language, kVikeyProfile);
-    std::fprintf(stderr, "[TsfController] ActivateLanguageProfile: 0x%08lX\\n", static_cast<unsigned long>(hr));
     if (FAILED(hr) || !isActiveProfile(language)) return false;
 
     g_activeLanguage = language;

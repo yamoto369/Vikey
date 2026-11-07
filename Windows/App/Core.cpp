@@ -1,4 +1,5 @@
 #include "Core.h"
+#include "TsfSharedState.h"
 #include "Site.h"
 #include "KeyMap.h"
 #include "InputPolicy.h"
@@ -58,24 +59,25 @@ static std::vector<std::wstring> _blacklistedApps;
 static bool _frontAppBlacklisted = false;
 static bool _tsfInputActive = false;
 static HANDLE _tsfSecureMapping = nullptr;
-static volatile LONG* _tsfSecureState = nullptr;
+static VikeyTsfSharedState* _tsfSecureState = nullptr;
 static bool initializeTsfSecureState() {
     if (_tsfSecureState) return true;
     _tsfSecureMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
-        0, sizeof(LONG), L"Local\\VikeySecureInputState");
+        0, sizeof(VikeyTsfSharedState), VIKEY_TSF_SHARED_STATE_NAME);
     if (!_tsfSecureMapping) return false;
-    _tsfSecureState = static_cast<volatile LONG*>(
-        MapViewOfFile(_tsfSecureMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(LONG)));
+    _tsfSecureState = static_cast<VikeyTsfSharedState*>(
+        MapViewOfFile(_tsfSecureMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(VikeyTsfSharedState)));
     if (!_tsfSecureState) {
         CloseHandle(_tsfSecureMapping);
         _tsfSecureMapping = nullptr;
         return false;
     }
-    InterlockedExchange(_tsfSecureState, 1); // Unknown focus is secure until UIA confirms otherwise.
+    _tsfSecureState->controllerProcessId = GetCurrentProcessId();
+    InterlockedExchange(&_tsfSecureState->secureContext, 1); // Unknown focus is secure until UIA confirms otherwise.
     return true;
 }
 static void releaseTsfSecureState() {
-    if (_tsfSecureState) UnmapViewOfFile(const_cast<LONG*>(_tsfSecureState));
+    if (_tsfSecureState) UnmapViewOfFile(_tsfSecureState);
     if (_tsfSecureMapping) CloseHandle(_tsfSecureMapping);
     _tsfSecureState = nullptr;
     _tsfSecureMapping = nullptr;
@@ -586,7 +588,7 @@ static LRESULT CALLBACK keyboardHook(int nCode, WPARAM wParam, LPARAM lParam) {
     // a password field gets the keys exactly as typed, in both languages: no Telex, no auto switch, no Backspace undo (also
     // right after a focus change, until the field has been checked)
     const bool passwordContext = site::focusedIsPassword();
-    if (_tsfSecureState) InterlockedExchange(_tsfSecureState, passwordContext ? 1 : 0);
+    if (_tsfSecureState) InterlockedExchange(&_tsfSecureState->secureContext, passwordContext ? 1 : 0);
     if (passwordContext) { resetTyping(); return CallNextHookEx(_kbHook, nCode, wParam, lParam); }
 
     // Backspace right after an automatic correction undoes it

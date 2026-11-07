@@ -66,7 +66,7 @@ public:
 
         BOOL selectionEmpty = FALSE;
         hr = selection.range->IsEmpty(cookie, &selectionEmpty);
-        if (FAILED(hr) || !selectionEmpty || !isSafeInputContext(cookie, selection.range) || vikey::tsf::isSecureInputContext() ||
+        if (FAILED(hr) || !selectionEmpty || !isSafeInputContext(cookie, selection.range) || vikey::tsf::isSecureInputContext() || !vikey::tsf::isControllerRunning() ||
             !vikey::tsf::shouldHandleKey(vikey::tsf::TextContextKind::Editable, vLanguage != 0, false)) {
             selection.range->Release();
             adapter_->reset();
@@ -251,7 +251,7 @@ public:
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
         refreshRuntimeSettings();
-        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() ||
+        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() || !vikey::tsf::isControllerRunning() ||
             vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
         *eaten = TRUE; // Request OnKeyDown; actual consumption is decided in the edit session.
         return S_OK;
@@ -260,7 +260,7 @@ public:
         if (!eaten) return E_POINTER;
         *eaten = FALSE;
         refreshRuntimeSettings();
-        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() ||
+        if (!context || vLanguage == 0 || vikey::tsf::isCurrentAppBlacklisted() || !vikey::tsf::isCurrentInputLanguageSupported() || vikey::tsf::isSecureInputContext() || !vikey::tsf::isControllerRunning() ||
             vikey::engineKey(static_cast<UINT>(key)) == KEY_EMPTY) return S_OK;
 
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;

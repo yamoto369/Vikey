@@ -189,10 +189,10 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (wp == TIMER_FLUSH) core::flushTypingLog();
         else if (wp == TIMER_TRAY_DPI) refreshTrayIcons();
-        else if (wp == TIMER_TSF_SYNC) core::setTsfInputActive(tsf::sync(core::language() != 0));
+        else if (wp == TIMER_TSF_SYNC) core::setTsfInputActive(tsf::sync(true));
         return 0;
     case WM_TSF_SYNC:
-        core::setTsfInputActive(tsf::sync(core::language() != 0));
+        core::setTsfInputActive(tsf::sync(true));
         return 0;
     case WM_SETTINGCHANGE:
     case WM_DISPLAYCHANGE:
@@ -266,7 +266,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 1;
     }
     updateTray(vikey::core::language());
-    vikey::core::setTsfInputActive(tsfReady && vikey::tsf::sync(vikey::core::language() != 0));
+    vikey::core::setTsfInputActive(tsfReady && vikey::tsf::sync(true));
     if (!vikey::prefs::has(L"FirstRunDone")) {
         vikey::ui::showSettings(inst, true);
     } else if (vikey::prefs::getInt(L"ShowWindowAtStartup", 1) != 0) {

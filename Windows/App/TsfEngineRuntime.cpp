@@ -1,4 +1,5 @@
 #include "TsfEngineRuntime.h"
+#include "TsfSharedState.h"
 #include "Engine.h"
 #include <windows.h>
 #include <mutex>
@@ -6,6 +7,7 @@
 #include <string>
 #include <algorithm>
 #include <cwchar>
+#include <windows.h>
 
 int vLanguage = 1;
 int vSwitchKeyStatus = 0x7A000206;
@@ -18,14 +20,56 @@ int vOtherLanguage = 0;
 int vAutoSwitchByTyping = 0;
 
 namespace vikey { namespace tsf {
+static VikeyTsfSharedState* sharedState() {
+    static std::mutex mutex;
+    static HANDLE mapping = nullptr;
+    static VikeyTsfSharedState* state = nullptr;
+    if (state) return state;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!state) {
+        mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE,
+            FALSE, VIKEY_TSF_SHARED_STATE_NAME);
+        if (mapping) {
+            state = static_cast<VikeyTsfSharedState*>(MapViewOfFile(mapping,
+                FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(VikeyTsfSharedState)));
+            if (!state) {
+                CloseHandle(mapping);
+                mapping = nullptr;
+            }
+        }
+    }
+    return state;
+}
+
 bool isSecureInputContext() {
-    static HANDLE mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, L"Local\\VikeySecureInputState");
-    static const volatile LONG* state = mapping
-        ? static_cast<const volatile LONG*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(LONG)))
-        : nullptr;
-    // If the controller's UIA password-state bridge is unavailable, fail closed.
+    VikeyTsfSharedState* state = sharedState();
+    // Unknown focus or an unavailable controller bridge is always secure.
     if (!state) return true;
-    return InterlockedCompareExchange(const_cast<volatile LONG*>(state), 0, 0) != 0;
+    return InterlockedCompareExchange(&state->secureContext, 0, 0) != 0;
+}
+
+bool isControllerRunning() {
+    VikeyTsfSharedState* state = sharedState();
+    if (!state || !state->controllerProcessId) return false;
+    const DWORD pid = state->controllerProcessId;
+    if (pid == GetCurrentProcessId()) return true;
+
+    static std::mutex processMutex;
+    static HANDLE controllerProcess = nullptr;
+    static DWORD cachedPid = 0;
+    std::lock_guard<std::mutex> lock(processMutex);
+    if (cachedPid != pid) {
+        if (controllerProcess) CloseHandle(controllerProcess);
+        controllerProcess = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        cachedPid = pid;
+    }
+    if (!controllerProcess) return false;
+    const DWORD wait = WaitForSingleObject(controllerProcess, 0);
+    if (wait == WAIT_TIMEOUT) return true;
+    CloseHandle(controllerProcess);
+    controllerProcess = nullptr;
+    cachedPid = 0;
+    return false;
 }
 
 bool isCurrentInputLanguageSupported() {
