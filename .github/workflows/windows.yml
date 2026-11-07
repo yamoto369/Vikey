@@ -1,6 +1,12 @@
 name: Windows build
 
 on:
+  push:
+    branches:
+      - feature/windows-tsf-migration
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       release_tag:
@@ -35,6 +41,7 @@ jobs:
         shell: pwsh
 
   build:
+    if: github.event_name == 'workflow_dispatch'
     name: Build Windows (${{ matrix.arch }})
     needs: engine-check
     strategy:
@@ -78,6 +85,7 @@ jobs:
           path: Windows/build/App/Vikey.exe
 
   package:
+    if: github.event_name == 'workflow_dispatch'
     name: Prepare portable builds
     needs: build
     runs-on: windows-latest
