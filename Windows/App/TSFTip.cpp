@@ -15,6 +15,8 @@ class VikeyTextService final : public ITfTextInputProcessor, public ITfKeyEventS
 public:
     VikeyTextService() { ++g_objects; }
     ~VikeyTextService() {
+        // The TSF manager normally retains the advised sink until Unadvise.
+        // Keep cleanup best-effort here; Deactivate reports failures to TSF.
         unadvise();
         --g_objects;
     }
@@ -50,7 +52,9 @@ public:
         clientId_ = clientId;
         hr = keyMgr_->AdviseKeyEventSink(clientId_, this, TRUE);
         if (FAILED(hr)) {
-            unadvise();
+            // Advise failed, so no sink registration exists; release the
+            // interfaces acquired during activation.
+            releaseManagers();
             return hr;
         }
         advised_ = true;
@@ -58,8 +62,7 @@ public:
     }
 
     STDMETHODIMP Deactivate() override {
-        unadvise();
-        return S_OK;
+        return unadvise();
     }
 
     STDMETHODIMP OnSetFocus(BOOL) override { return S_OK; }
@@ -90,9 +93,21 @@ public:
     }
 
 private:
-    void unadvise() {
-        if (advised_ && keyMgr_) keyMgr_->UnadviseKeyEventSink(clientId_);
-        advised_ = false;
+    HRESULT unadvise() {
+        if (advised_ && keyMgr_) {
+            HRESULT hr = keyMgr_->UnadviseKeyEventSink(clientId_);
+            if (FAILED(hr)) {
+                // Do not release the sink's manager reference after a failed
+                // unadvise: TSF may still call back into this object.
+                return hr;
+            }
+            advised_ = false;
+        }
+        releaseManagers();
+        return S_OK;
+    }
+
+    void releaseManagers() {
         if (keyMgr_) { keyMgr_->Release(); keyMgr_ = nullptr; }
         if (threadMgr_) { threadMgr_->Release(); threadMgr_ = nullptr; }
         clientId_ = TF_CLIENTID_NULL;
