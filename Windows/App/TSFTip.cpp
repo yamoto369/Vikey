@@ -505,6 +505,11 @@ public:
         }
         vikey::tsf::EngineEdit edit =
             adapter_.processKey(static_cast<UINT>(key), shift, capsLock, modified);
+        {
+            wchar_t note[120] = {};
+            swprintf_s(note, _countof(note), L"engine vk=0x%02X consume=%d", static_cast<unsigned>(key), edit.consume ? 1 : 0);
+            tipTrace(note);
+        }
         if (!edit.consume) {
             tipNote(17, L"engine ran and passed the key through (normal for plain letters)");
             return S_OK;
