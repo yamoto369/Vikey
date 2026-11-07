@@ -35,11 +35,23 @@ static HMODULE thisModule() {
     return module;
 }
 
+static void writeTipLine(const wchar_t* text);
+
 static void tipNote(unsigned id, const wchar_t* text) {
     static std::atomic<unsigned long long> seen{0};
     const unsigned long long bit = 1ULL << (id & 63);
     if (seen.fetch_or(bit) & bit) return;
+    writeTipLine(text);
+}
 
+// Per-key detail, bounded so a long typing session cannot grow the log without limit.
+static void tipTrace(const wchar_t* text) {
+    static std::atomic<unsigned> lines{0};
+    if (lines.fetch_add(1) >= 60) return;
+    writeTipLine(text);
+}
+
+static void writeTipLine(const wchar_t* text) {
     wchar_t dll[MAX_PATH] = {};
     const DWORD length = GetModuleFileNameW(thisModule(), dll, MAX_PATH);
     if (!length || length >= MAX_PATH) return;
@@ -139,6 +151,73 @@ static bool isSafeInputContext(TfEditCookie cookie, ITfRange* range) {
     CoTaskMemFree(scopes);
     return safe;
 }
+
+// The character this key types with the active layout and the current Shift/Caps Lock state.
+static std::wstring typedCharacter(UINT vk) {
+    BYTE state[256] = {};
+    if (GetKeyState(VK_SHIFT) & 0x8000) state[VK_SHIFT] = 0x80;
+    if (GetKeyState(VK_CAPITAL) & 0x0001) state[VK_CAPITAL] = 0x01;
+    wchar_t buffer[8] = {};
+    const HKL layout = GetKeyboardLayout(0);
+    const UINT scan = MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, layout);
+    // Flag 0x4: do not change the keyboard's dead-key state.
+    const int count = ToUnicodeEx(vk, scan, state, buffer, _countof(buffer), 0x4, layout);
+    return count == 1 ? std::wstring(buffer, 1) : std::wstring();
+}
+
+// Types plain text at the caret. Used when a claimed key cannot be turned into its Vietnamese
+// edit: TSF no longer delivers a claimed key, so the character must be inserted here or it is lost.
+class VikeyInsertSession final : public ITfEditSession {
+public:
+    VikeyInsertSession(ITfContext* context, std::wstring text) : context_(context), text_(std::move(text)) {
+        if (context_) context_->AddRef();
+    }
+    ~VikeyInsertSession() { if (context_) context_->Release(); }
+    STDMETHODIMP QueryInterface(REFIID iid, void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_ITfEditSession))
+            *object = static_cast<ITfEditSession*>(this);
+        else return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        ULONG refs = --refs_;
+        if (!refs) delete this;
+        return refs;
+    }
+    bool inserted() const { return inserted_; }
+    STDMETHODIMP DoEditSession(TfEditCookie cookie) override {
+        if (!context_ || text_.empty()) return E_UNEXPECTED;
+        TF_SELECTION selection{};
+        ULONG fetched = 0;
+        HRESULT hr = context_->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+        if (FAILED(hr) || fetched != 1 || !selection.range) {
+            if (selection.range) selection.range->Release();
+            return FAILED(hr) ? hr : TF_E_NOSELECTION;
+        }
+        hr = selection.range->SetText(cookie, 0, text_.c_str(), static_cast<LONG>(text_.size()));
+        if (SUCCEEDED(hr)) {
+            inserted_ = true;
+            if (SUCCEEDED(selection.range->Collapse(cookie, TF_ANCHOR_END))) {
+                TF_SELECTION caret{};
+                caret.range = selection.range;
+                caret.style.ase = TF_AE_END;
+                caret.style.fInterimChar = FALSE;
+                context_->SetSelection(cookie, 1, &caret);
+            }
+        }
+        selection.range->Release();
+        return hr;
+    }
+private:
+    std::atomic<ULONG> refs_{1};
+    ITfContext* context_ = nullptr;
+    std::wstring text_;
+    bool inserted_ = false;
+};
 
 // Read-only check run from OnTestKeyDown, so a key is only claimed when the
 // focused field is an editable, empty-selection, non-sensitive text context.
@@ -277,6 +356,10 @@ public:
             const LONG requested = -static_cast<LONG>(edit.backspaces);
             hr = replacement->ShiftStart(cookie, requested, &shifted, nullptr);
             if (FAILED(hr) || shifted != requested) {
+                wchar_t note[160] = {};
+                swprintf_s(note, _countof(note), L"edit session: ShiftStart could not move back (requested=%ld shifted=%ld hr=0x%08lX)",
+                    static_cast<long>(requested), static_cast<long>(shifted), static_cast<unsigned long>(hr));
+                tipTrace(note);
                 replacement->Release();
                 adapter_->reset();
                 return FAILED(hr) ? hr : TF_E_INVALIDPOS;
@@ -426,6 +509,12 @@ public:
             tipNote(17, L"engine ran and passed the key through (normal for plain letters)");
             return S_OK;
         }
+        {
+            wchar_t note[160] = {};
+            swprintf_s(note, _countof(note), L"claim vk=0x%02X backspaces=%u newTextLength=%u",
+                static_cast<unsigned>(key), static_cast<unsigned>(edit.backspaces), static_cast<unsigned>(edit.text.size()));
+            tipTrace(note);
+        }
         pendingKey_ = static_cast<UINT>(key);
         pendingEdit_ = std::move(edit);
         hasPending_ = true;
@@ -447,14 +536,17 @@ public:
         HRESULT sessionResult = E_FAIL;
         HRESULT hr = context->RequestEditSession(clientId_, session,
             TF_ES_SYNC | TF_ES_READWRITE, &sessionResult);
-        if (SUCCEEDED(hr) && SUCCEEDED(sessionResult))
-            *eaten = session->applied() ? TRUE : FALSE;
-        else {
+        if (SUCCEEDED(hr) && SUCCEEDED(sessionResult) && session->applied()) {
+            *eaten = TRUE;
+        } else {
             wchar_t note[160] = {};
-            swprintf_s(note, _countof(note), L"edit session could not run (request hr=0x%08lX, session hr=0x%08lX)",
+            swprintf_s(note, _countof(note), L"edit session did not apply the edit (request hr=0x%08lX, session hr=0x%08lX); typing the plain character instead",
                 static_cast<unsigned long>(hr), static_cast<unsigned long>(sessionResult));
             tipNote(24, note);
             adapter_.reset();
+            // TSF no longer delivers a key that OnTestKeyDown claimed, so type it here.
+            *eaten = insertPlainCharacter(context, static_cast<UINT>(key)) ? TRUE : FALSE;
+            if (!*eaten) tipNote(25, L"the plain character could not be typed either; the key was lost");
         }
         session->Release();
         return S_OK;
@@ -476,6 +568,19 @@ public:
     }
 
 private:
+    bool insertPlainCharacter(ITfContext* context, UINT vk) {
+        const std::wstring text = typedCharacter(vk);
+        if (text.empty()) return false;
+        auto* insert = new (std::nothrow) VikeyInsertSession(context, text);
+        if (!insert) return false;
+        HRESULT sessionResult = E_FAIL;
+        const HRESULT hr = context->RequestEditSession(clientId_, insert,
+            TF_ES_SYNC | TF_ES_READWRITE, &sessionResult);
+        const bool done = SUCCEEDED(hr) && SUCCEEDED(sessionResult) && insert->inserted();
+        insert->Release();
+        return done;
+    }
+
     bool contextAllowsEditing(ITfContext* context) {
         auto* probe = new (std::nothrow) VikeyContextProbe(context);
         if (!probe) return false;

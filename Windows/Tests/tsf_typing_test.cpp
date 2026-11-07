@@ -488,7 +488,7 @@ int wmain() {
 
     {   // An ordinary text field: no input scope declared.
         auto* store = new MockTextStore(false);
-        runScenario(threadMgr, client, "plain text field", store, L"vieetj nams ddi", L"việt nám đi", true);
+        runScenario(threadMgr, client, "plain text field", store, L"vieetj nams ddi", L"vi\u1ec7t n\u00e1m \u0111i", true);
         store->Release();
     }
     {   // Backspace must pass straight through to the application.
