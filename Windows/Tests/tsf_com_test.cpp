@@ -84,8 +84,24 @@ int wmain(int argc, wchar_t** argv) {
                         HRESULT queryHr = threadMgr->QueryInterface(IID_PPV_ARGS(&queriedKeyMgr));
                         std::printf("ITfThreadMgr::QueryInterface(ITfKeystrokeMgr) = 0x%08lX\\n",
                             static_cast<unsigned long>(queryHr));
+                        std::printf("TSF clientId = 0x%08lX\\n", static_cast<unsigned long>(clientId));
                         check("thread manager exposes ITfKeystrokeMgr",
                             SUCCEEDED(queryHr) && queriedKeyMgr != nullptr);
+
+                        ITfKeyEventSink* directSink = nullptr;
+                        HRESULT sinkHr = tip->QueryInterface(IID_PPV_ARGS(&directSink));
+                        check("query direct diagnostic key sink", SUCCEEDED(sinkHr) && directSink != nullptr);
+                        if (SUCCEEDED(queryHr) && queriedKeyMgr && directSink) {
+                            HRESULT directAdviseHr = queriedKeyMgr->AdviseKeyEventSink(clientId, directSink, TRUE);
+                            std::printf("Direct AdviseKeyEventSink HRESULT = 0x%08lX\\n",
+                                static_cast<unsigned long>(directAdviseHr));
+                            check("direct TSF key sink advise", SUCCEEDED(directAdviseHr));
+                            if (SUCCEEDED(directAdviseHr)) {
+                                check("direct TSF key sink unadvise",
+                                    SUCCEEDED(queriedKeyMgr->UnadviseKeyEventSink(clientId)));
+                            }
+                        }
+                        if (directSink) directSink->Release();
                         if (queriedKeyMgr) queriedKeyMgr->Release();
 
                         hr = tip->Activate(threadMgr, clientId);
