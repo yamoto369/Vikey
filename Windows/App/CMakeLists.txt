@@ -27,3 +27,9 @@ add_executable(vikey_keymap_test ../Tests/keymap_test.cpp)
 target_include_directories(vikey_keymap_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vikey_keymap_test PRIVATE vikey_engine)
 target_compile_definitions(vikey_keymap_test PRIVATE UNICODE _UNICODE)
+
+# Pure input policy tests for hotkey matching and app blacklist normalization.
+add_executable(vikey_input_policy_test ../Tests/input_policy_test.cpp)
+target_include_directories(vikey_input_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vikey_input_policy_test PRIVATE vikey_engine)
+target_compile_definitions(vikey_input_policy_test PRIVATE UNICODE _UNICODE)
