@@ -53,7 +53,11 @@ vikey_tool(bench     ${AS}/driver/bench.cpp        ${AS}/driver vikey_engine)
 vikey_tool(undo_test ${AS}/driver/undo_test.cpp    ${AS}/driver vikey_engine)
 vikey_tool(touchsim  ${AS}/touch/touchsim.cpp      ${AS}/touch  vikey_engine)
 
-# Windows app (added in Phase 2)
-if(WIN32 AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/App/CMakeLists.txt)
+# Windows input is implemented as a TSF TIP, not by a global keyboard hook.
+if(WIN32)
+  enable_testing()
+  add_subdirectory(TSF)
   add_subdirectory(App)
+  add_dependencies(vikey vikey_tsf)
+  add_subdirectory(Tests/TSF)
 endif()

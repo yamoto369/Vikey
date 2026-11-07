@@ -26,6 +26,7 @@ public:
     VikeyDriver();
     /** A key press (letters, digits, punctuation, KEY_SPACE, KEY_RETURN, KEY_DELETE). now: seconds, any clock. */
     VKEdit press(Uint16 key, bool shift, double now = 0);
+    VKEdit pressWithCaps(Uint16 key, bool shift, bool capsLock, double now = 0);
     /** The user switched language by hand (VI/EN key). */
     void manualSwitch(double now = 0);
     /** Set the language without counting as a manual switch (start of a field). */
@@ -37,6 +38,7 @@ public:
     double pauseAfterManual = 5;
     /** The user's auto switch setting (the pause turns the engine's switch off temporarily). */
     bool autoSwitch = true;
+    bool autoSwitchModeByTyping = true;
     int autoSwitches = 0, undos = 0;
 
 private:
@@ -48,8 +50,8 @@ private:
     Uint32 undoKeys[MAX_BUFF]; int undoKeyCount = 0;   // keys of the original word (English can go on typing it)
     Uint32 undoneKeys[MAX_BUFF]; int undoneCount = 0;  // the word Backspace put back: finished unchanged, it stays
     double pauseUntil = 0; bool paused = false;
-    void engineOutput(VKEdit& e, Uint16 key, bool shift);
-    void rememberFix(int corrected, Uint16 key, bool shift);
+    void engineOutput(VKEdit& e, Uint16 key, bool shift, bool capsLock);
+    void rememberFix(int corrected, Uint16 key, bool shift, bool capsLock);
     void switchTo(int lang);
     void updatePause(double now);
 };

@@ -1,4 +1,4 @@
-// Vikey for Windows: tray icon (V / E), menu, and the message loop the hooks need.
+// Vikey for Windows: tray icon (V / E), menu, and the TSF control message loop.
 #include <windows.h>
 #include <shellapi.h>
 #include <string>
@@ -34,6 +34,16 @@ static ULONG_PTR _gdipToken = 0;
 static UINT _iconDpi = 0;
 static int _iconSize = 0;
 static bool _trayAdded = false;
+
+// These WinEvent callbacks update only app/site metadata. Keyboard input is handled by TSF.
+static HWINEVENTHOOK _foregroundEventHook = nullptr;
+static HWINEVENTHOOK _focusEventHook = nullptr;
+static VOID CALLBACK foregroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
+    vikey::core::onForegroundChanged();
+}
+static VOID CALLBACK focusChanged(HWINEVENTHOOK, DWORD, HWND window, LONG object, LONG child, DWORD, DWORD) {
+    vikey::site::pollPassword(window, object, child);
+}
 
 /// Render a crisp, DPI-sized tray tile. V uses the app's indigo gradient; E is black.
 static HICON makeIcon(wchar_t letter, int size) {
@@ -183,6 +193,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_APP + 3: ui::showSettings(GetModuleHandleW(nullptr), false); return 0;
     case WM_VIKEY_SETLANG: core::setLanguageQuiet((int)wp); return 1;
+    case WM_APP + 7: core::notifyLanguageFromTip((int)wp); return 0;
     case WM_TIMER:
         if (wp == TIMER_FLUSH) core::flushTypingLog();
         else if (wp == TIMER_TRAY_DPI) refreshTrayIcons();
@@ -194,6 +205,9 @@ static LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case site::WM_SITE: { HWND w; std::wstring host = site::lastHost(&w); if (w == GetForegroundWindow()) core::onSiteChanged(host); return 0; }
     case WM_DESTROY:
+        if (_foregroundEventHook) UnhookWinEvent(_foregroundEventHook);
+        if (_focusEventHook) UnhookWinEvent(_focusEventHook);
+        _foregroundEventHook = _focusEventHook = nullptr;
         core::stop();
         if (_trayAdded) Shell_NotifyIconW(NIM_DELETE, &_nid);
         _trayAdded = false;
@@ -242,7 +256,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     _trayAdded = Shell_NotifyIconW(NIM_ADD, &_nid) != FALSE;
     vikey::core::setLanguageObserver([](int lang) { updateTray(lang); vikey::ui::languageChanged(lang); });
     if (!vikey::core::start()) {
-        MessageBoxW(nullptr, L"Không cài được bộ bắt phím (SetWindowsHookEx).", L"Vikey", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Không đăng ký được TSF Text Service. Hãy kiểm tra file VikeyTsf bên cạnh Vikey.exe.", L"Vikey", MB_ICONERROR);
         if (_trayAdded) Shell_NotifyIconW(NIM_DELETE, &_nid);
         _trayAdded = false;
         DestroyWindow(_hwnd);
@@ -259,7 +273,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
     SetTimer(_hwnd, TIMER_FLUSH, 10000, nullptr);
     SetTimer(_hwnd, TIMER_TRAY_DPI, 3000, nullptr);
-    vikey::site::start(_hwnd);   // per-website memory and password fields, read off the hook thread
+    _foregroundEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+        nullptr, foregroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    _focusEventHook = SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS,
+        nullptr, focusChanged, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    vikey::site::start(_hwnd);   // site context and password-field metadata only
     MSG msg; while (GetMessageW(&msg, nullptr, 0, 0)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     ReleaseMutex(single); CloseHandle(single);
     if (_gdipToken) GdiplusShutdown(_gdipToken);

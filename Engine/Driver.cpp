@@ -12,23 +12,24 @@ static bool isLetterKey(Uint16 key) { for (Uint16 k : letterKeys) if (k == key) 
 static bool isWhitespace(Uint16 key) { return key == KEY_SPACE || key == KEY_RETURN || key == KEY_ENTER || key == KEY_TAB; }
 static bool isWordStart(Uint16 key, bool shift) { return isWhitespace(key) || (key == KEY_9 && shift) || key == KEY_LEFT_BRACKET || key == KEY_QUOTE; }
 static char16_t charOf(Uint32 d) { return (d & CHAR_CODE_MASK) ? (char16_t)(d & 0xFFFF) : (char16_t)keyCodeToCharacter(d); }
-static char16_t typedChar(Uint16 key, bool shift) {
+static char16_t typedChar(Uint16 key, bool shift, bool capsLock = false) {
     if (key == KEY_RETURN || key == KEY_ENTER) return u'\n';
-    return keyCodeToCharacter(key | (shift ? CAPS_MASK : 0));
+    const bool uppercase = shift || (capsLock && isLetterKey(key));
+    return keyCodeToCharacter(key | (uppercase ? CAPS_MASK : 0));
 }
 
 VikeyDriver::VikeyDriver() { H = (vKeyHookState*)vKeyInit(); }
 
-void VikeyDriver::engineOutput(VKEdit& e, Uint16 key, bool shift) {
+void VikeyDriver::engineOutput(VKEdit& e, Uint16 key, bool shift, bool capsLock) {
     e.deleteCount = H->backspaceCount;
     for (int i = H->newCharCount - 1; i >= 0; i--) e.text.push_back(charOf(H->charData[i]));
-    if (H->code == vRestore || H->code == vRestoreAndStartNewSession) { char16_t ch = typedChar(key, shift); if (ch) e.text.push_back(ch); }
+    if (H->code == vRestore || H->code == vRestoreAndStartNewSession) { char16_t ch = typedChar(key, shift, capsLock); if (ch) e.text.push_back(ch); }
     if (H->code == vRestoreAndStartNewSession) startNewSession();
 }
 
-void VikeyDriver::rememberFix(int corrected, Uint16 key, bool shift) {
+void VikeyDriver::rememberFix(int corrected, Uint16 key, bool shift, bool capsLock) {
     undoActive = false;
-    char16_t brk = typedChar(key, shift);
+    char16_t brk = typedChar(key, shift, capsLock);
     if (!brk || brk == u'\n' || vAutoSwitchUndoCount <= 0 || corrected <= 0) return;
     //only a fix of the last word is undone; one that also fixed earlier words stays (D20)
     for (int x = 0; x < vAutoSwitchUndoCount; x++)
@@ -79,6 +80,10 @@ void VikeyDriver::resetContext() {
 }
 
 VKEdit VikeyDriver::press(Uint16 key, bool shift, double now) {
+    return pressWithCaps(key, shift, false, now);
+}
+
+VKEdit VikeyDriver::pressWithCaps(Uint16 key, bool shift, bool capsLock, double now) {
     VKEdit e;
     updatePause(now);
     //Backspace right after an auto-fix puts the typed keys and the language back
@@ -101,19 +106,25 @@ VKEdit VikeyDriver::press(Uint16 key, bool shift, double now) {
     undoActive = false;
     if (vLanguage == 1) {
         vAutoSwitchRequest = -1;
-        vKeyHandleEvent(vKeyEvent::Keyboard, vKeyEventState::KeyDown, key, shift ? 1 : 0, false);
+        vKeyHandleEvent(vKeyEvent::Keyboard, vKeyEventState::KeyDown, key,
+                        (shift || (capsLock && isLetterKey(key))) ? 1 : 0, false);
         if (H->code == vDoNothing) {
             if (key == KEY_DELETE) e.deleteCount = 1;
-            else { char16_t ch = typedChar(key, shift); if (ch) e.text.push_back(ch); }
+            else { char16_t ch = typedChar(key, shift, capsLock); if (ch) e.text.push_back(ch); }
         } else {
             bool atBreak = vAutoSwitchRequest == 0 && !isLetterKey(key);
             int corrected = H->newCharCount;
-            engineOutput(e, key, shift);
+            engineOutput(e, key, shift, capsLock);
             if (vAutoSwitchRequest == 0) {
                 vAutoSwitchRequest = -1;
-                if (atBreak) rememberFix(corrected, key, shift);
-                switchTo(0);
-                e.languageChanged = true;
+                if (atBreak) rememberFix(corrected, key, shift, capsLock);
+                if (autoSwitchModeByTyping) {
+                    switchTo(0);
+                    e.languageChanged = true;
+                } else {
+                    startNewSession();
+                    vAutoSwitchForget();
+                }
                 enCount = 0; enValid = atBreak && isWhitespace(key); prevN = 0;
                 //D35: the word just put back to English is the previous word for look-back
                 if (key == KEY_SPACE && vAutoSwitchRestoredCount > 0) {
@@ -125,10 +136,16 @@ VKEdit VikeyDriver::press(Uint16 key, bool shift, double now) {
         }
         return e;
     }
+    // English mode with automatic correction disabled: preserve normal text editing.
+    if (!autoSwitch) {
+        if (key == KEY_DELETE) e.deleteCount = 1;
+        else { char16_t ch = typedChar(key, shift, capsLock); if (ch) e.text.push_back(ch); }
+        return e;
+    }
     // English mode
     if (isLetterKey(key)) {
-        if (enCount < MAX_BUFF - 2) enKeys[enCount++] = key | (shift ? CAPS_MASK : 0); else enValid = false;
-        e.text.push_back(typedChar(key, shift));
+        if (enCount < MAX_BUFF - 2) enKeys[enCount++] = key | ((shift || capsLock) ? CAPS_MASK : 0); else enValid = false;
+        e.text.push_back(typedChar(key, shift, capsLock));
         return e;
     }
     if (key == KEY_DELETE) {
@@ -141,7 +158,7 @@ VKEdit VikeyDriver::press(Uint16 key, bool shift, double now) {
     for (Uint16 d : {KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9}) if (key == d) digit = true;
     if (digit && !shift) {   // digits after a space start a word of their own ("5trawm" -> "5trăm", D33); glued to letters, a code
         enValid = enCount == 0 && enValid; enCount = 0; prevN = 0; enAfterDouble = false;
-        e.text.push_back(typedChar(key, shift));
+        e.text.push_back(typedChar(key, shift, capsLock));
         return e;
     }
     bool wordEnd = key == KEY_SPACE || key == KEY_COMMA || key == KEY_DOT || key == KEY_SEMICOLON || key == KEY_RETURN || key == KEY_ENTER ||
@@ -151,8 +168,8 @@ VKEdit VikeyDriver::press(Uint16 key, bool shift, double now) {
     if (afterDouble && wordEnd && vAutoSwitchFixDoubledKey(enKeys, count)) {
         enCount = 0; enValid = isWhitespace(key); prevN = 0;
         int corrected = H->newCharCount;
-        engineOutput(e, key, shift);
-        rememberFix(corrected, key, shift);
+        engineOutput(e, key, shift, capsLock);
+        rememberFix(corrected, key, shift, capsLock);
         return e;
     }
     enCount = 0; enValid = isWordStart(key, shift);
@@ -168,12 +185,17 @@ VKEdit VikeyDriver::press(Uint16 key, bool shift, double now) {
     } else prevN = 0;
     if (converted) {
         int corrected = H->newCharCount;
-        engineOutput(e, key, shift);
-        rememberFix(corrected, key, shift);
-        switchTo(1);
-        e.languageChanged = true;
+        engineOutput(e, key, shift, capsLock);
+        rememberFix(corrected, key, shift, capsLock);
+        if (autoSwitchModeByTyping) {
+            switchTo(1);
+            e.languageChanged = true;
+        } else {
+            startNewSession();
+            vAutoSwitchForget();
+        }
         return e;
     }
-    char16_t ch = typedChar(key, shift); if (ch) e.text.push_back(ch);
+    char16_t ch = typedChar(key, shift, capsLock); if (ch) e.text.push_back(ch);
     return e;
 }
