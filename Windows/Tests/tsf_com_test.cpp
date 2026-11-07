@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <msctf.h>
 #include <cstdio>
+#include <objbase.h>
 
 using GetClassObjectFn = HRESULT (STDAPICALLTYPE*)(REFCLSID, REFIID, void**);
 using CanUnloadFn = HRESULT (STDAPICALLTYPE*)();
@@ -12,13 +13,18 @@ static void check(const char* name, bool ok) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    check("COM apartment initialized", SUCCEEDED(comHr));
+    if (FAILED(comHr)) return 1;
+
     if (argc != 2) {
+        CoUninitialize();
         std::fprintf(stderr, "Usage: tsf_com_test.exe <VikeyTsf.dll>\\n");
         return 2;
     }
     HMODULE module = LoadLibraryW(argv[1]);
     check("LoadLibrary", module != nullptr);
-    if (!module) return 1;
+    if (!module) { CoUninitialize(); return 1; }
 
     auto getClassObject = reinterpret_cast<GetClassObjectFn>(
         GetProcAddress(module, "DllGetClassObject"));
@@ -62,7 +68,27 @@ int wmain(int argc, wchar_t** argv) {
                     sink->Release();
                 }
                 check("Activate rejects null thread manager", tip->Activate(nullptr, TF_CLIENTID_NULL) == E_INVALIDARG);
-                check("Deactivate is idempotent", SUCCEEDED(tip->Deactivate()) && SUCCEEDED(tip->Deactivate()));
+
+                // Exercise the actual TSF manager supplied to TIPs by Windows.
+                ITfThreadMgr* threadMgr = nullptr;
+                hr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
+                    IID_ITfThreadMgr, reinterpret_cast<void**>(&threadMgr));
+                check("create TSF thread manager", SUCCEEDED(hr) && threadMgr != nullptr);
+                if (threadMgr) {
+                    TfClientId clientId = TF_CLIENTID_NULL;
+                    hr = threadMgr->Activate(&clientId);
+                    check("activate TSF thread manager", SUCCEEDED(hr) && clientId != TF_CLIENTID_NULL);
+                    if (SUCCEEDED(hr)) {
+                        hr = tip->Activate(threadMgr, clientId);
+                        check("TIP activation advises real TSF key sink", SUCCEEDED(hr));
+                        check("duplicate TIP activation rejected",
+                            tip->Activate(threadMgr, clientId) == TF_E_ALREADY_EXISTS);
+                        check("TIP deactivation unadvises real TSF key sink", SUCCEEDED(tip->Deactivate()));
+                        check("TIP deactivation is idempotent", SUCCEEDED(tip->Deactivate()));
+                    }
+                    check("deactivate TSF thread manager", SUCCEEDED(threadMgr->Deactivate()));
+                    threadMgr->Release();
+                }
                 tip->Release();
             }
             factory->Release();
@@ -70,8 +96,9 @@ int wmain(int argc, wchar_t** argv) {
         check("objects released; DLL can unload", canUnload() == S_OK);
     }
 
-    FreeLibrary(module);
-    check("FreeLibrary", true);
+    const BOOL unloaded = FreeLibrary(module);
+    check("FreeLibrary", unloaded != FALSE);
+    CoUninitialize();
     std::printf("TSF COM smoke test: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }
