@@ -97,6 +97,8 @@ int wmain(int argc, wchar_t** argv) {
         ITfInputProcessorProfiles* profiles = nullptr;
         ITfThreadMgr* threadMgr = nullptr;
         bool threadMgrActivated = false;
+        bool languageProfileReady = false;
+        LANGID currentLangId = 0;
 
         if (registered) {
             hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
@@ -105,7 +107,6 @@ int wmain(int argc, wchar_t** argv) {
         }
 
         if (profiles) {
-            LANGID currentLangId = 0;
             hr = profiles->GetCurrentLanguage(&currentLangId);
             check("get current input language", SUCCEEDED(hr) && currentLangId != 0);
 
@@ -123,10 +124,11 @@ int wmain(int argc, wchar_t** argv) {
                 std::printf("EnableLanguageProfile HRESULT = 0x%08lX\n",
                     static_cast<unsigned long>(hr));
                 check("enable test language profile", SUCCEEDED(hr));
+                languageProfileReady = SUCCEEDED(hr);
             }
         }
 
-        if (profiles) {
+        if (profiles && languageProfileReady) {
             hr = CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
                 IID_PPV_ARGS(&threadMgr));
             check("create TSF thread manager for profile activation", SUCCEEDED(hr) && threadMgr != nullptr);
@@ -138,7 +140,7 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
 
-        if (profiles && threadMgrActivated) {
+        if (profiles && languageProfileReady && threadMgrActivated) {
             hr = profiles->ActivateLanguageProfile(clsid,
                 currentLangId, profileGuid);
             std::printf("ActivateLanguageProfile HRESULT = 0x%08lX\n",
